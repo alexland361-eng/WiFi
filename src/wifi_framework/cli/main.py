@@ -12,6 +12,9 @@ from typing import List
 from ..core.models.scope import AssessmentScope
 from ..core.engine.assessment_engine import AssessmentEngine
 from ..core.execution.registry import get_global_registry
+from ..core.execution.tool_manager import ToolManager
+from ..core.execution.interface_manager import InterfaceManager
+from ..core.execution.dependency_resolver import DependencyResolver
 from ..tools.registry_loader import load_all_adapters
 from ..core.audit.logger import AuditLogger
 from ..core.experience.store import ExperienceStore
@@ -194,11 +197,41 @@ def load_scope_from_args(args) -> AssessmentScope:
 
 
 def cmd_list_capabilities(registry, interface: str = None):
-    """List capabilities."""
-    print("=== Registered Capabilities ===")
+    """List capabilities with deep tool management."""
+    print("=== Registered Capabilities (Deep Management) ===")
+
+    tool_manager = ToolManager(registry)
+    interface_manager = InterfaceManager(tool_manager)
+    dependency_resolver = DependencyResolver(registry)
+
+    # Show deep tool info
+    deep_tools = tool_manager.discover_all_tools()
+    print(f"\nDeep Tool Discovery: {len(deep_tools)} binaries")
+    for binary, info in sorted(deep_tools.items()):
+        if info.available:
+            print(f"  AVAILABLE: {binary} at {info.path} version={info.version_raw[:50] if info.version_raw else 'unknown'} operational={info.operational}")
+        else:
+            print(f"  UNAVAILABLE: {binary} - {info.failure_reason}")
+
+    # Show interface deep capabilities
+    deep_ifaces = tool_manager.discover_all_interfaces()
+    print(f"\nDeep Interface Discovery: {len(deep_ifaces)} interfaces")
+    for iface_name, cap in deep_ifaces.items():
+        print(f"  {iface_name}: exists={cap.exists} up={cap.is_up} driver={cap.driver} monitor={cap.supports_monitor} injection={cap.supports_injection} mac={cap.mac}")
+
+    # Show tool chains
+    print(f"\nTool Chains Feasibility:")
+    for objective in ["handshake_capture", "wps_assessment", "wireless_discovery", "network_discovery", "service_enumeration", "vulnerability_assessment", "interface_setup"]:
+        chain = tool_manager.get_tool_chain(objective)
+        feasible, missing, reasons = dependency_resolver.check_tool_chain_feasibility(chain, interface)
+        status = "FEASIBLE" if feasible else f"PARTIAL missing={missing}"
+        print(f"  {objective}: {chain} -> {status}")
+
+    print(f"\n=== Detailed Capability List ===")
     for name in sorted(registry.list_capabilities()):
         meta = registry.get_metadata(name)
-        available, reason, details = registry.check_availability(name, interface)
+        # Use deep check
+        available, reason, details = tool_manager.get_capability_status(name, interface)
         status = "AVAILABLE" if available else f"UNAVAILABLE ({reason})"
         print(f"\n{name}:")
         print(f"  Display: {meta.display_name}")
@@ -209,6 +242,18 @@ def cmd_list_capabilities(registry, interface: str = None):
         print(f"  Inputs: {meta.inputs}")
         print(f"  Outputs: {meta.outputs}")
         print(f"  Invasive: {meta.operational_properties.invasive}")
+        print(f"  Persistent: {meta.operational_properties.persistent}")
+        print(f"  Requires Auth: {meta.operational_properties.requires_authorization}")
+        if meta.requirements.interface_capabilities:
+            print(f"  Needs: {meta.requirements.interface_capabilities}")
+        if meta.references:
+            print(f"  References: {meta.references}")
+
+        # Suggest alternatives if unavailable
+        if not available:
+            alternatives = dependency_resolver.suggest_alternatives(name, registry.get_available_capabilities(interface))
+            if alternatives:
+                print(f"  Alternatives: {alternatives[:3]}")
 
 
 def cmd_discover_only(scope: AssessmentScope, output_dir: str = None):

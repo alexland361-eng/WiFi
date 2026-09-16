@@ -32,8 +32,8 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
     # Network - includes DNS enum
     from .adapters.network import arp_scan, dig, dns_enum, fping, netdiscover, nmap
 
-    # Enumeration - includes advanced
-    from .adapters.enumeration import advanced, generic
+    # Enumeration - includes advanced and remaining
+    from .adapters.enumeration import advanced, generic, remaining
 
     # Protocol
     from .adapters.protocol import bettercap, macchanger, scapy_adapter
@@ -41,12 +41,19 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
     # Vuln
     from .adapters.vuln import nuclei_nikto
 
+    # Interface advanced
+    from .adapters.interface import advanced_aircrack
+
+    # Framework
+    from .adapters.framework import metasploit_impacket
+
     # Register each
     modules = [
         iw,
         iwconfig,
         airmon,
         aireplay,
+        advanced_aircrack,
         rfkill,
         ethtool,
         airodump,
@@ -74,10 +81,12 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
         dns_enum,
         generic,
         advanced,
+        remaining,
         macchanger,
         bettercap,
         scapy_adapter,
         nuclei_nikto,
+        metasploit_impacket,
     ]
 
     for mod in modules:

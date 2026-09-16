@@ -19,6 +19,9 @@ from ..models.finding import Finding, FindingCategory, FindingSeverity, FindingS
 from ..models.evidence import EvidenceType
 from ..execution.registry import CapabilityRegistry, get_global_registry
 from ..execution.executor import CapabilityExecutor
+from ..execution.tool_manager import ToolManager
+from ..execution.interface_manager import InterfaceManager
+from ..execution.dependency_resolver import DependencyResolver
 from ..planning.planner import AssessmentPlanner
 from ..audit.logger import AuditLogger
 from ..experience.store import ExperienceStore
@@ -56,6 +59,11 @@ class AssessmentEngine:
         else:
             self.state = assessment_state
 
+        # Tool Manager - advanced handling
+        self.tool_manager = ToolManager(registry)
+        self.interface_manager = InterfaceManager(self.tool_manager)
+        self.dependency_resolver = DependencyResolver(registry)
+
         # Executor
         self.executor = CapabilityExecutor(registry, self.state)
 
@@ -75,10 +83,15 @@ class AssessmentEngine:
 
         # Load experience scores into state for planner
         self.state.extra["experience_scores"] = self.experience_store.get_experience_scores()
+        self.state.extra["tool_manager"] = self.tool_manager.to_dict()
 
     def discover_interfaces(self) -> List[InterfaceInfo]:
-        """Discover wireless interfaces using iw and iwconfig."""
-        print("[*] Discovering wireless interfaces...")
+        """Discover wireless interfaces using iw and iwconfig with deep capability checks."""
+        print("[*] Discovering wireless interfaces with deep capability checks...")
+
+        # Use ToolManager for deep discovery
+        deep_interfaces = self.tool_manager.discover_all_interfaces()
+        print(f"    Deep scan found {len(deep_interfaces)} interfaces with driver/monitor/injection checks")
 
         # Use iw dev
         result = self.executor.execute("iw_dev", timeout=10, state=self.state)
@@ -90,7 +103,12 @@ class AssessmentEngine:
         if result2.success:
             print(f"    Found {len(result2.evidences)} interface observations via iwconfig")
 
-        # Build InterfaceInfo from evidences and system
+        # Use rfkill
+        result3 = self.executor.execute("rfkill", timeout=5, state=self.state)
+        if result3.success:
+            print(f"    RFKill status: {len(result3.evidences)} devices")
+
+        # Build InterfaceInfo from evidences and deep checks
         interfaces = {}
 
         # Get system interfaces
@@ -100,21 +118,43 @@ class AssessmentEngine:
             if iface_name == "lo":
                 continue
 
-            # Check if we have evidence for this interface
-            info = InterfaceInfo(name=iface_name, type="unknown")
+            # Use deep check if available
+            if iface_name in deep_interfaces:
+                deep_cap = deep_interfaces[iface_name]
+                info = InterfaceInfo(
+                    name=deep_cap.name,
+                    type=deep_cap.type,
+                    driver=deep_cap.driver,
+                    chipset=deep_cap.chipset,
+                    mac=deep_cap.mac,
+                    supports_monitor=deep_cap.supports_monitor,
+                    supports_injection=deep_cap.supports_injection,
+                    is_up=deep_cap.is_up,
+                    channel=deep_cap.current_channel,
+                    extra={
+                        "monitor_tested": deep_cap.monitor_tested,
+                        "injection_tested": deep_cap.injection_tested,
+                        "injection_result": deep_cap.injection_test_result,
+                        "channels": deep_cap.channels,
+                        "deep_discovery": True,
+                    },
+                )
+            else:
+                # Check if we have evidence for this interface
+                info = InterfaceInfo(name=iface_name, type="unknown")
 
-            # Look for evidence
-            for ev in self.state.evidences:
-                if ev.evidence_type == EvidenceType.INTERFACE:
-                    if ev.parsed_data.get("name") == iface_name:
-                        info.type = ev.parsed_data.get("type", info.type)
-                        info.mac = ev.parsed_data.get("mac") or ev.parsed_data.get("addr")
-                        info.driver = ev.parsed_data.get("driver")
-                        info.channel = ev.parsed_data.get("channel")
-                        info.frequency = ev.parsed_data.get("frequency")
-                        # Check for monitor support from iw list if available
-                        if ev.parsed_data.get("supports_monitor"):
-                            info.supports_monitor = True
+                # Look for evidence
+                for ev in self.state.evidences:
+                    if ev.evidence_type == EvidenceType.INTERFACE:
+                        if ev.parsed_data.get("name") == iface_name:
+                            info.type = ev.parsed_data.get("type", info.type)
+                            info.mac = ev.parsed_data.get("mac") or ev.parsed_data.get("addr")
+                            info.driver = ev.parsed_data.get("driver")
+                            info.channel = ev.parsed_data.get("channel")
+                            info.frequency = ev.parsed_data.get("frequency")
+                            # Check for monitor support from iw list if available
+                            if ev.parsed_data.get("supports_monitor"):
+                                info.supports_monitor = True
 
             interfaces[iface_name] = info
 
@@ -130,27 +170,53 @@ class AssessmentEngine:
         self.state.interfaces = interfaces
 
         print(f"[+] Discovered {len(interfaces)} interfaces: {list(interfaces.keys())}")
+        for name, info in interfaces.items():
+            print(f"    - {name}: type={info.type} driver={info.driver} monitor={info.supports_monitor} injection={info.supports_injection} up={info.is_up}")
 
         return list(interfaces.values())
 
     def discover_capabilities(self, interface: str = None):
-        """Discover available capabilities in current environment."""
-        print("[*] Discovering tool capabilities...")
+        """Discover available capabilities in current environment with deep checks."""
+        print("[*] Discovering tool capabilities with deep management...")
 
-        available = self.registry.get_available_capabilities(interface)
-        unavailable = self.registry.get_unavailable_capabilities(interface)
+        # Use ToolManager for deep tool discovery
+        deep_tools = self.tool_manager.discover_all_tools()
+        print(f"    Deep tool scan: {len(deep_tools)} binaries checked")
+
+        available = {}
+        unavailable = {}
+
+        # Deep check each capability
+        for cap_name in self.registry.list_capabilities():
+            ok, reason, details = self.tool_manager.get_capability_status(cap_name, interface)
+            meta = self.registry.get_metadata(cap_name)
+            if ok:
+                available[cap_name] = meta
+            else:
+                unavailable[cap_name] = reason
 
         self.state.available_capabilities = available
         self.state.unavailable_capabilities = unavailable
 
         self.audit_logger.log_capability_discovery(available, unavailable)
 
+        # Log tool manager state
+        self.audit_logger.log_event("tool_manager_state", self.tool_manager.to_dict())
+        self.audit_logger.log_event("dependency_resolver", self.dependency_resolver.to_dict())
+
         print(f"[+] Available capabilities: {len(available)}")
         print(f"    Unavailable: {len(unavailable)}")
-        for name, reason in list(unavailable.items())[:5]:
+        for name, reason in list(unavailable.items())[:8]:
             print(f"      - {name}: {reason}")
-        if len(unavailable) > 5:
-            print(f"      ... and {len(unavailable)-5} more")
+        if len(unavailable) > 8:
+            print(f"      ... and {len(unavailable)-8} more")
+
+        # Show tool chains feasibility
+        for objective in ["handshake_capture", "wps_assessment", "network_discovery", "vulnerability_assessment"]:
+            chain = self.tool_manager.get_tool_chain(objective)
+            feasible, missing, reasons = self.dependency_resolver.check_tool_chain_feasibility(chain, interface)
+            status = "FEASIBLE" if feasible else f"PARTIAL (missing: {missing})"
+            print(f"    Chain {objective}: {status}")
 
         return available, unavailable
 

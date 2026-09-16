@@ -1,0 +1,296 @@
+"""
+Interface Manager - Advanced wireless interface handling and management.
+
+Handles:
+- Monitor mode creation and teardown (airmon-ng, iw)
+- Channel setting and hopping
+- MAC address management (macchanger)
+- Interface up/down
+- Driver and chipset detection
+- Capability verification (monitor, injection)
+
+Deep research confirmation: Real usage of airmon-ng, iw, macchanger, etc.
+"""
+from __future__ import annotations
+
+import os
+import re
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+from ...utils.system import run_command, check_interface_exists
+from ...utils.validation import validate_mac, normalize_mac
+from ..models.assessment_state import InterfaceInfo
+from .tool_manager import ToolManager
+
+
+class InterfaceManager:
+    """Manages wireless interfaces lifecycle."""
+
+    def __init__(self, tool_manager: ToolManager):
+        self.tool_manager = tool_manager
+
+    def list_interfaces(self) -> List[str]:
+        """List system interfaces."""
+        from ...utils.system import get_interface_list
+
+        return get_interface_list()
+
+    def get_interface_info(self, interface: str) -> Optional[InterfaceInfo]:
+        """Get interface info with deep checks."""
+        cap = self.tool_manager.check_interface_deep(interface)
+        if not cap.exists:
+            return None
+
+        info = InterfaceInfo(
+            name=cap.name,
+            type=cap.type,
+            driver=cap.driver,
+            chipset=cap.chipset,
+            mac=cap.mac,
+            supports_monitor=cap.supports_monitor,
+            supports_injection=cap.supports_injection,
+            is_up=cap.is_up,
+            channel=cap.current_channel,
+            extra={
+                "monitor_tested": cap.monitor_tested,
+                "injection_tested": cap.injection_tested,
+                "injection_result": cap.injection_test_result,
+                "channels": cap.channels,
+            },
+        )
+        return info
+
+    def set_interface_up(self, interface: str) -> Tuple[bool, str]:
+        """Set interface up."""
+        if not check_interface_exists(interface):
+            return False, f"Interface {interface} does not exist"
+
+        exit_code, stdout, stderr, _ = run_command(["ip", "link", "set", interface, "up"], timeout=5)
+        if exit_code == 0:
+            return True, "Interface up"
+        else:
+            # Try ifconfig fallback
+            exit_code2, stdout2, stderr2, _ = run_command(["ifconfig", interface, "up"], timeout=5)
+            if exit_code2 == 0:
+                return True, "Interface up (via ifconfig)"
+            return False, f"Failed to set up: {stderr} {stderr2}"
+
+    def set_interface_down(self, interface: str) -> Tuple[bool, str]:
+        """Set interface down."""
+        if not check_interface_exists(interface):
+            return False, f"Interface {interface} does not exist"
+
+        exit_code, stdout, stderr, _ = run_command(["ip", "link", "set", interface, "down"], timeout=5)
+        if exit_code == 0:
+            return True, "Interface down"
+        else:
+            exit_code2, stdout2, stderr2, _ = run_command(["ifconfig", interface, "down"], timeout=5)
+            if exit_code2 == 0:
+                return True, "Interface down (via ifconfig)"
+            return False, f"Failed to set down: {stderr} {stderr2}"
+
+    def set_channel(self, interface: str, channel: int) -> Tuple[bool, str]:
+        """Set channel via iw."""
+        if not check_interface_exists(interface):
+            return False, f"Interface {interface} does not exist"
+
+        # Validate channel
+        if not 1 <= channel <= 196:
+            return False, f"Invalid channel {channel}"
+
+        # Try iw first
+        exit_code, stdout, stderr, _ = run_command(["iw", "dev", interface, "set", "channel", str(channel)], timeout=5)
+        if exit_code == 0:
+            return True, f"Channel set to {channel} via iw"
+
+        # Try iwconfig fallback
+        exit_code2, stdout2, stderr2, _ = run_command(["iwconfig", interface, "channel", str(channel)], timeout=5)
+        if exit_code2 == 0:
+            return True, f"Channel set to {channel} via iwconfig"
+
+        return False, f"Failed to set channel: {stderr} {stderr2}"
+
+    def create_monitor_interface(self, interface: str, channel: int = None) -> Tuple[bool, str, Optional[str]]:
+        """
+        Create monitor interface via airmon-ng or iw.
+
+        Returns (success, message, monitor_interface_name)
+        """
+        if not check_interface_exists(interface):
+            return False, f"Interface {interface} does not exist", None
+
+        # Try airmon-ng first (handles driver quirks)
+        tool_info = self.tool_manager.check_tool_deep("airmon-ng")
+        if tool_info.available and self.tool_manager.is_root:
+            cmd = ["airmon-ng", "start", interface]
+            if channel:
+                cmd.append(str(channel))
+
+            exit_code, stdout, stderr, _ = run_command(cmd, timeout=10)
+            combined = stdout + stderr
+
+            if exit_code == 0:
+                # Parse monitor interface name
+                # Example: (mac80211 monitor mode vif enabled for [phy0]wlan0 on [phy0]wlan0mon)
+                m = re.search(r"on\s+\[phy\d+\](\w+mon)", combined)
+                if m:
+                    mon_iface = m.group(1)
+                    return True, f"Monitor interface {mon_iface} created via airmon-ng", mon_iface
+
+                # Fallback: look for mon interface in output
+                # airmon-ng without args lists
+                exit_code2, stdout2, stderr2, _ = run_command(["airmon-ng"], timeout=5)
+                # Try to find new interface
+                # For simplicity, check if wlan0mon exists
+                for suffix in ["mon", "mon0"]:
+                    test_iface = interface + suffix if not interface.endswith("mon") else interface
+                    if check_interface_exists(test_iface):
+                        return True, f"Monitor interface {test_iface} created via airmon-ng", test_iface
+
+                # If we can't parse, assume wlan0mon
+                assumed = interface + "mon" if not interface.endswith("mon") else interface
+                if check_interface_exists(assumed):
+                    return True, f"Monitor interface {assumed} created via airmon-ng (assumed)", assumed
+
+                return True, "Monitor mode enabled via airmon-ng but interface name unclear", None
+            else:
+                # airmon-ng failed, try iw
+                pass
+
+        # Try iw method: iw dev <iface> set type monitor
+        # First set down
+        self.set_interface_down(interface)
+
+        exit_code, stdout, stderr, _ = run_command(["iw", "dev", interface, "set", "type", "monitor"], timeout=5)
+        if exit_code == 0:
+            self.set_interface_up(interface)
+            return True, f"Monitor mode set via iw for {interface}", interface
+
+        # Try iwconfig
+        exit_code2, stdout2, stderr2, _ = run_command(["iwconfig", interface, "mode", "Monitor"], timeout=5)
+        if exit_code2 == 0:
+            self.set_interface_up(interface)
+            return True, f"Monitor mode set via iwconfig for {interface}", interface
+
+        self.set_interface_up(interface)
+        return False, f"Failed to create monitor: {stderr} {stderr2}", None
+
+    def remove_monitor_interface(self, monitor_interface: str, original_interface: str = None) -> Tuple[bool, str]:
+        """Remove monitor interface via airmon-ng stop or iw."""
+        if not check_interface_exists(monitor_interface):
+            return False, f"Monitor interface {monitor_interface} does not exist"
+
+        # Try airmon-ng stop
+        tool_info = self.tool_manager.check_tool_deep("airmon-ng")
+        if tool_info.available and self.tool_manager.is_root:
+            exit_code, stdout, stderr, _ = run_command(["airmon-ng", "stop", monitor_interface], timeout=10)
+            if exit_code == 0:
+                return True, f"Monitor interface {monitor_interface} removed via airmon-ng"
+
+        # Try iw: set back to managed
+        self.set_interface_down(monitor_interface)
+        exit_code, stdout, stderr, _ = run_command(
+            ["iw", "dev", monitor_interface, "set", "type", "managed"], timeout=5
+        )
+        if exit_code == 0:
+            self.set_interface_up(monitor_interface)
+            return True, f"Monitor interface {monitor_interface} set to managed via iw"
+
+        # Try deleting interface via iw
+        exit_code2, stdout2, stderr2, _ = run_command(["iw", "dev", monitor_interface, "del"], timeout=5)
+        if exit_code2 == 0:
+            return True, f"Monitor interface {monitor_interface} deleted via iw"
+
+        self.set_interface_up(monitor_interface)
+        return False, f"Failed to remove monitor: {stderr} {stderr2}"
+
+    def change_mac(self, interface: str, mac: str = None, random: bool = False) -> Tuple[bool, str, Optional[str]]:
+        """
+        Change MAC via macchanger.
+
+        Returns (success, message, new_mac)
+        """
+        if not check_interface_exists(interface):
+            return False, f"Interface {interface} does not exist", None
+
+        if mac:
+            valid, msg = validate_mac(mac)
+            if not valid:
+                return False, f"Invalid MAC: {msg}", None
+            mac = normalize_mac(mac)
+
+        tool_info = self.tool_manager.check_tool_deep("macchanger")
+        if not tool_info.available:
+            return False, "macchanger not available", None
+
+        # Interface must be down for some drivers
+        was_up = self.tool_manager.check_interface_deep(interface).is_up
+        if was_up:
+            self.set_interface_down(interface)
+
+        if random:
+            cmd = ["macchanger", "-r", interface]
+        elif mac:
+            cmd = ["macchanger", "-m", mac, interface]
+        else:
+            cmd = ["macchanger", "-r", interface]
+
+        exit_code, stdout, stderr, _ = run_command(cmd, timeout=5)
+        combined = stdout + stderr
+
+        if was_up:
+            self.set_interface_up(interface)
+
+        if exit_code == 0:
+            # Parse new MAC
+            m = re.search(r"New MAC:\s*([0-9A-Fa-f:]{17})", combined)
+            if m:
+                new_mac = m.group(1).upper()
+                return True, f"MAC changed to {new_mac}", new_mac
+            # Also check Current MAC after change
+            m = re.search(r"Current MAC:\s*([0-9A-Fa-f:]{17})", combined)
+            if m:
+                new_mac = m.group(1).upper()
+                return True, f"MAC changed to {new_mac}", new_mac
+            return True, "MAC changed (new MAC unclear)", None
+        else:
+            return False, f"Failed to change MAC: {combined}", None
+
+    def unblock_rfkill(self) -> Tuple[bool, str]:
+        """Unblock all rfkill."""
+        tool_info = self.tool_manager.check_tool_deep("rfkill")
+        if not tool_info.available:
+            return False, "rfkill not available"
+
+        exit_code, stdout, stderr, _ = run_command(["rfkill", "unblock", "all"], timeout=5)
+        if exit_code == 0:
+            return True, "rfkill unblocked all"
+        else:
+            exit_code2, stdout2, stderr2, _ = run_command(["rfkill", "unblock", "wifi"], timeout=5)
+            if exit_code2 == 0:
+                return True, "rfkill unblocked wifi"
+            return False, f"Failed to unblock rfkill: {stderr} {stderr2}"
+
+    def get_supported_channels(self, interface: str) -> List[int]:
+        """Get supported channels via iw list."""
+        channels = []
+
+        try:
+            exit_code, stdout, stderr, _ = run_command(["iw", "list"], timeout=5)
+            if exit_code == 0:
+                # Parse frequencies and channels
+                # Example: * 2412 MHz [1] (20.0 dBm)
+                for line in stdout.splitlines():
+                    m = re.search(r"\* \d+ MHz \[(\d+)\]", line)
+                    if m:
+                        try:
+                            ch = int(m.group(1))
+                            if ch not in channels:
+                                channels.append(ch)
+                        except ValueError:
+                            pass
+        except Exception:
+            pass
+
+        return sorted(channels)
