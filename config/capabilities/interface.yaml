@@ -1,0 +1,22 @@
+# Interface capabilities
+- name: iw_dev
+  tool_binary: iw
+  category: wireless_interface
+  description: "Wireless interface discovery via iw dev"
+  requirements:
+    os: [linux]
+    interface_required: false
+    privileges: []
+
+- name: iw_list
+  tool_binary: iw
+  category: wireless_interface
+  description: "PHY capability discovery via iw list"
+
+- name: airmon-ng
+  tool_binary: airmon-ng
+  category: wireless_interface
+  description: "Monitor mode management"
+  requirements:
+    privileges: [root]
+    interface_capabilities: [monitor_mode]

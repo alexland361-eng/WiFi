@@ -1,0 +1,8 @@
+pyyaml>=6.0
+
+# Optional but recommended for full protocol analysis
+# scapy>=2.5.0
+
+# Dev dependencies
+# pytest>=7.0
+# pytest-cov>=4.0

@@ -1,0 +1,49 @@
+# Default configuration for WiFi Framework
+# Assessment scope - define authorized assets
+
+# Authorized SSIDs (supports regex patterns)
+authorized_ssids:
+  # - "MyNetwork"
+  # - "CorpWiFi.*"
+  # - "TestLab"
+
+# Authorized BSSIDs (MAC addresses)
+authorized_bssids:
+  # - "00:11:22:33:44:55"
+  # - "AA:BB:CC:DD:EE:FF"
+
+# Authorized channels (empty = all allowed)
+authorized_channels:
+  # - 1
+  # - 6
+  # - 11
+  # - 36
+
+# Authorized networks (CIDR notation) - for post-wireless network assessment
+authorized_networks:
+  # - "192.168.1.0/24"
+  # - "10.0.0.0/8"
+
+# Authorized hosts
+authorized_hosts:
+  # - "192.168.1.1"
+  # - "example.com"
+
+# General settings
+description: "Default assessment scope - customize for authorized testing"
+allow_broadcast_discovery: true
+strict_mode: false
+
+# Engine settings
+engine:
+  max_iterations: 30
+  timeout_per_action: 60
+  auto_discover: true
+
+# Audit settings
+audit:
+  log_dir: "/tmp/wifi_framework_audit"
+
+# Experience settings
+experience:
+  store_path: "/tmp/wifi_framework_experience.jsonl"
