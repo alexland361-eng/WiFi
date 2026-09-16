@@ -123,13 +123,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RESEARCH.md with sources: Kali Tools docs, Aircrack-ng docs, Wireshark docs, Scapy docs, tool --help, man pages, GitHub repos
 - Each tool section explains real usage, output, operational characteristics, and framework's adaptive usage
 
+## [0.3.0] - 2026-09-16
+
+### Added - Advanced Tool Handling and Management with Deep Research Confirmation
+- **ToolManager** (`src/wifi_framework/core/execution/tool_manager.py`): Advanced tool handling with deep research
+  - ToolInfo with version parsing (multiple flags --version, -v, -V, version), operational check via --help, dependency tracking, caching 60s
+  - InterfaceCapability with driver via ethtool -i, monitor via iw list * monitor, injection via aireplay-ng --test, channels via iw list * MHz [channel], MAC via /sys/class/net, up via operstate/ip link
+  - get_capability_status with deep interface checks (monitor, injection) and driver info for controlled failure and replanning
+  - Tool chains for objectives: handshake_capture, wpa_crack, wps_assessment, wireless_discovery, network_discovery, dns_enumeration, service_enumeration, vulnerability_assessment, interface_setup - reflecting real assessment flow not blind execution
+  - Resource management: temp file/dir creation and cleanup for pcap, csv, kismet logs
+  - to_dict for audit
+
+- **InterfaceManager** (`src/wifi_framework/core/execution/interface_manager.py`): Lifecycle management with deep research
+  - list_interfaces via /sys/class/net
+  - get_interface_info deep via ToolManager → InterfaceInfo
+  - set_interface_up/down via ip link with ifconfig fallback
+  - set_channel via iw dev set channel with iwconfig fallback, validation 1-196
+  - create_monitor_interface via airmon-ng start (parses monitor name via regex on [phy0]wlan0mon) then iw set type monitor then iwconfig mode Monitor fallback - handles driver quirks
+  - remove_monitor_interface via airmon-ng stop, iw set type managed, iw dev del
+  - change_mac via macchanger -r or -m with down/up handling, parses New MAC, for authorized MAC filtering tests
+  - unblock_rfkill via rfkill unblock all/wifi
+  - get_supported_channels via iw list * MHz [channel] regex
+
+- **DependencyResolver** (`src/wifi_framework/core/execution/dependency_resolver.py`): Execution order and alternatives
+  - resolve_dependencies recursively with cycle avoidance via visited set, finds provider capability by tool_binary
+  - get_execution_plan for objectives with duplicate removal preserving order
+  - check_tool_chain_feasibility with missing and reasons for controlled failure
+  - suggest_alternatives via output overlap (e.g., if airodump missing, suggest tshark/kismet/horst that produce access_points)
+  - to_dict for audit
+
+- **Enhanced Engine discovery** (`src/wifi_framework/core/engine/assessment_engine.py`):
+  - discover_interfaces now uses ToolManager deep scan for driver/monitor/injection, plus iw dev, iwconfig, rfkill evidence, prints driver/monitor/injection/up per interface
+  - discover_capabilities uses ToolManager deep tool discovery (58 binaries) and deep capability status, logs tool_manager_state and dependency_resolver, shows tool chains feasibility per objective
+
+- **CLI --list-capabilities deep** (`src/wifi_framework/cli/main.py`):
+  - Deep tool discovery with path/version/operational
+  - Deep interface discovery with driver/monitor/injection/MAC
+  - Tool chains feasibility per objective
+  - Detailed list with invasive/persistent/requires_auth/needs/references/alternatives if unavailable
+
+- **New adapters after deep research (58 total, +12 from 46)**:
+  - `airserv-ng`: Remote wireless interface access -d -c -p -v, persistent, for distributed assessment
+  - `packetforge-ng`: Packet construction -0 -a BSSID -h client -k src_ip -l dst_ip -y fragment.xor -w custom.cap, invasive, produces pcap
+  - `wpaclean`: WPA capture cleanup cleaned.cap capture.cap, offline analysis
+  - `airdecloak-ng`: Cloaked frame analysis -i pcap --ssid, reveals hidden SSIDs, parses decloaked SSID
+  - `ldapsearch`: LDAP enumeration -x -h host -b base filter, parses DN entries
+  - `rpcclient`: RPC enumeration -U user%pass host -c enumdomusers, parses user/rid/group
+  - `ftp`: FTP enumeration via curl ftp://host/, parses listing
+  - `wget`: HTTP retrieval -qO- url, -r recursive, parses content length/snippet
+  - `openvas`: OpenVAS/Greenbone vuln assessment --version, gvm-cli socket --xml, requires allow_scan for safety
+  - `metasploit`: Vuln validation via msfconsole -q -x use module; set RHOSTS; check; exit, default check not run, requires allow_run for exploitation, parses vulnerable/session opened
+  - `impacket`: Protocol implementations via impacket-psexec, impacket-secretsdump with user:pass@target, parses potential access
+  - `responder`: Auth capture via responder -I iface -w -r -f, parses captured NTLM hashes [SMB] [HTTP]
+
+- **Tool handling philosophy**: Tools as specialized instruments, not interchangeable wrappers, each with capabilities, prerequisites, inputs, outputs, operational characteristics, evidence types. Framework does NOT assume every tool should be executed. Selection determined by state, hardware, scope, evidence, uncertainties. Example WPS flow from spec implemented. Tool may be re-selected if new evidence useful, skipped if already established.
+
+### Changed
+- Registry loader now loads 58 capabilities covering full Kali toolchain per deep research and tool management
+- Test `test_registry_loading` now expects >=50 capabilities and checks 46 expected including all new
+- Core execution __init__ now exports ToolManager, InterfaceManager, DependencyResolver
+- Engine now uses ToolManager, InterfaceManager, DependencyResolver for advanced handling
+
+### Security
+- Maintained security-first: no shell=True, validation for new adapters (BSSID, ESSID, domain, target), scope enforcement for invasive (aireplay-ng deauth, airbase-ng AP simulation, packetforge-ng, nuclei, nikto, metasploit run, impacket, responder), safety for metasploit (check default) and openvas (allow_scan)
+
+### Documentation
+- TOOL_HANDLING.md with deep research, operational integrity, resource management, auditability, security, verification
+- RESEARCH.md already covers all tools with real usage, flags, output, operational characteristics, sources, adaptive usage
+
 ## [Unreleased]
 
 ### Planned
-- Additional adapters: wpaclean, airdecloak-ng, ivstools, packetforge-ng, airdriver-ng, airserv-ng, wget, ftp, ldapsearch, rpcclient, Greenbone/OpenVAS, Metasploit, Impacket, Responder
-- More detailed parsers for horst, wavemon, kismet logs, hcxdumptool status
+- Additional adapters: airdriver-ng, ivstools (can be added similarly), Wireshark GUI (not suitable for automation but could add adapter for --help)
+- More detailed parsers for horst, wavemon, kismet logs, hcxdumptool status counters
 - Verification workflows: re-scan with different tool, signal correlation
 - Web UI for assessment visualization
 - AI-based decision system as optional planner
-- Integration tests with real hardware
-- Performance benchmarks
+- Integration tests with real hardware on Kali
+- Performance benchmarks for large-scale assessments
