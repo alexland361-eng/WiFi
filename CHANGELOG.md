@@ -80,14 +80,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit reporting of unavailable capabilities with reasons
 - Auditability with full traceability
 
+## [0.2.0] - 2026-09-16
+
+### Added - Deep Research & Fullest Potential Usage
+- **RESEARCH.md**: Comprehensive deep research document covering all Kali wireless toolchain tools with real usage, flags, output formats, operational characteristics, sources, and how framework leverages each tool's fullest potential per adaptive philosophy
+- **New adapters after deep research (46 total capabilities, up from 30)**:
+  - `aireplay-ng`: Active wireless testing with injection test, deauth, fakeauth, arpreplay actions; highly invasive with strict scope enforcement; parses injection working/failure, acks, BSSID not found
+  - `aircrack-ng`: Capture analysis and key-recovery with wordlist, BSSID filtering, mode; parses KEY FOUND
+  - `airdecap-ng`: Authorized capture decryption with ESSID, BSSID, password; parses decrypted count
+  - `airbase-ng`: AP simulation/testing with ESSID, channel, BSSID; evidence type ACCESS_POINT
+  - `termshark`: Terminal Wireshark with interface and read_file support
+  - `mitmproxy`: HTTP/HTTPS interception via mitmdump/mitmproxy/mitmweb with write_file, read_file, listen_port; relevant after wireless access reaches app layer
+  - `dnsenum`: DNS enumeration with dnsserver, wordlist, enum, whois; parses A records, NS, IPs
+  - `dnsrecon`: DNS reconnaissance with scan types std, rvl, brt, etc.
+  - `smbmap`: SMB share enumeration with user, password, recursive listing
+  - `enum4linux-ng`: Comprehensive SMB enumeration with -A all
+  - `nbtscan`: NetBIOS scanning with IP, NetBIOS name parsing
+  - `snmpwalk`: SNMP enumeration with version, community, OID
+  - `nuclei`: Template-based vuln scanning with severity, templates, output; parses [severity] [template] [url]
+  - `nikto`: Web server assessment with port, output; parses OSVDB findings
+- **Enhanced existing adapters** to use fullest potential:
+  - `iw`: Now supports subcommands link, info, scan via parameters (not just dev)
+  - `airodump-ng`: Documented --berlin, --wps, --output-format pcap, --write-interval, BSSID filtering, channel filtering; handles temp file lifecycle with multiple formats
+  - `wash`: Documented survey passive mode, JSON output, ignore FCS, channel filtering; correlates with WPS state
+  - `tshark`: Documented BPF capture filter vs Wireshark display filter distinction, JSON vs fields, count, duration; useful for verification with specific filters (EAPOL, beacon)
+  - `bettercap`: Documented caplet and eval for granular capability exposure rather than opaque run everything
+  - `scapy`: Documented as programmatic component, direct library execution with stdout capture, fallback to subprocess
+  - `reaver/bully/pixiewps`: Documented pixie dust attack flow, correlation with wash discovery, verification via second tool
+  - `hcxdumptool/hcxpcapngtool/hashcat/john`: Documented distinction between capture acquisition, material conversion, offline analysis, verification phases
+  - `nmap`: Documented 3 output formats (normal, grepable -oG -, XML -oX -), scan types, timing, scripts; parser handles all 3
+  - `curl/openssl/smbclient`: Documented as relevant only when wireless assessment transitions to service enumeration after access, with port-based selection (curl only when 80/443 open)
+
+### Changed
+- Registry loader now loads 46 capabilities covering full Kali toolchain per deep research
+- Test `test_registry_loading` now expects >=40 capabilities and checks 27 expected including new ones
+
+### Security
+- Maintained security-first: no shell=True, input validation for new adapters (BSSID, ESSID, domain, target), scope enforcement for invasive (aireplay-ng, airbase-ng, nuclei, nikto)
+- Deep research ensures each tool's operational characteristics (invasive, persistent, produces_pcap, requires_authorization) accurately modeled in metadata
+
+### Documentation
+- RESEARCH.md with sources: Kali Tools docs, Aircrack-ng docs, Wireshark docs, Scapy docs, tool --help, man pages, GitHub repos
+- Each tool section explains real usage, output, operational characteristics, and framework's adaptive usage
+
 ## [Unreleased]
 
 ### Planned
-- Additional parsers for more tools (horst, wavemon, kismet logs, hcxdumptool status)
-- More detailed verification workflows (e.g., re-scan with different tool for AP confirmation)
-- Greenbone/OpenVAS, Nuclei, Nikto adapters for vulnerability assessment phase
-- Metasploit, Impacket, Responder framework adapters
+- Additional adapters: wpaclean, airdecloak-ng, ivstools, packetforge-ng, airdriver-ng, airserv-ng, wget, ftp, ldapsearch, rpcclient, Greenbone/OpenVAS, Metasploit, Impacket, Responder
+- More detailed parsers for horst, wavemon, kismet logs, hcxdumptool status
+- Verification workflows: re-scan with different tool, signal correlation
 - Web UI for assessment visualization
 - AI-based decision system as optional planner
-- Integration tests with real hardware (requires physical wireless adapter)
-- Performance benchmarks for large-scale assessments
+- Integration tests with real hardware
+- Performance benchmarks

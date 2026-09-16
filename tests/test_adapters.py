@@ -7,14 +7,42 @@ def test_registry_loading():
     registry = CapabilityRegistry()
     load_all_adapters(registry)
 
-    # Should have many capabilities
+    # Should have many capabilities - after deep research we have 46 covering full Kali toolchain
     caps = registry.list_capabilities()
-    assert len(caps) >= 20, f"Expected at least 20 capabilities, got {len(caps)}: {caps}"
+    assert len(caps) >= 40, f"Expected at least 40 capabilities after deep research, got {len(caps)}: {caps}"
 
-    # Check some expected capabilities exist
-    expected = ["iw_dev", "airodump-ng", "wash", "tshark", "nmap", "reaver"]
+    # Check some expected capabilities exist - covering all categories from spec
+    expected = [
+        "iw_dev",
+        "iw_list",
+        "airmon-ng",
+        "aireplay-ng",
+        "airodump-ng",
+        "aircrack-ng",
+        "airdecap-ng",
+        "airbase-ng",
+        "wash",
+        "tshark",
+        "tcpdump",
+        "dumpcap",
+        "termshark",
+        "nmap",
+        "reaver",
+        "bully",
+        "pixiewps",
+        "hcxdumptool",
+        "hcxpcapngtool",
+        "hashcat",
+        "nuclei",
+        "nikto",
+        "curl",
+        "mitmproxy",
+        "macchanger",
+        "bettercap",
+        "scapy",
+    ]
     for exp in expected:
-        assert exp in caps, f"Expected capability {exp} not found"
+        assert exp in caps, f"Expected capability {exp} not found after deep research implementation"
 
 
 def test_adapter_metadata():

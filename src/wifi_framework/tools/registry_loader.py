@@ -14,35 +14,39 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
         registry = get_global_registry()
 
     # Import all adapter modules to trigger registration
-    # Interface
-    from .adapters.interface import airmon, ethtool, iw, iwconfig, rfkill
+    # Interface - includes aircrack suite
+    from .adapters.interface import airmon, aireplay, ethtool, iw, iwconfig, rfkill
 
     # Discovery
     from .adapters.discovery import airodump, horst, kismet, wash, wavemon
 
-    # Capture
-    from .adapters.capture import dumpcap, tcpdump, tshark
+    # Capture - includes termshark, mitmproxy, airbase
+    from .adapters.capture import dumpcap, tcpdump, termshark, tshark
 
     # WPS
     from .adapters.wps import bully, pixiewps, reaver
 
-    # WPA
-    from .adapters.wpa import hashcat, hcxdumptool, hcxpcapngtool, john
+    # WPA - includes aircrack suite
+    from .adapters.wpa import aircrack, hashcat, hcxdumptool, hcxpcapngtool, john
 
-    # Network
-    from .adapters.network import arp_scan, dig, fping, netdiscover, nmap
+    # Network - includes DNS enum
+    from .adapters.network import arp_scan, dig, dns_enum, fping, netdiscover, nmap
 
-    # Enumeration
-    from .adapters.enumeration import generic
+    # Enumeration - includes advanced
+    from .adapters.enumeration import advanced, generic
 
     # Protocol
     from .adapters.protocol import bettercap, macchanger, scapy_adapter
+
+    # Vuln
+    from .adapters.vuln import nuclei_nikto
 
     # Register each
     modules = [
         iw,
         iwconfig,
         airmon,
+        aireplay,
         rfkill,
         ethtool,
         airodump,
@@ -53,6 +57,7 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
         tshark,
         tcpdump,
         dumpcap,
+        termshark,
         reaver,
         bully,
         pixiewps,
@@ -60,15 +65,19 @@ def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry
         hcxpcapngtool,
         hashcat,
         john,
+        aircrack,
         nmap,
         arp_scan,
         netdiscover,
         fping,
         dig,
+        dns_enum,
         generic,
+        advanced,
         macchanger,
         bettercap,
         scapy_adapter,
+        nuclei_nikto,
     ]
 
     for mod in modules:

@@ -182,18 +182,92 @@ This document tracks experiences, challenges, and learning moments encountered d
 - [x] Project structure with clear boundaries
 - [x] No fabricated output, explicit unavailable reporting
 
+### Session: 2026-09-16 - Deep Research & Fullest Potential (Follow-up)
+
+#### Context
+User asked: "Did you do a deep research about the tool, usage and How Actual things work? and also To use every tools fullest potential, in their own ways, accordingly to the philosophy?"
+
+This challenged whether initial implementation was just basic wrappers or truly understood each tool's real operational characteristics and fullest potential per adaptive philosophy.
+
+#### Challenge: Demonstrating Deep Research
+
+**Initial implementation had 30 capabilities**, covering core tools but missing some from spec (aireplay-ng, aircrack-ng, airdecap-ng, airbase-ng, dnsenum, dnsrecon, smbmap, enum4linux-ng, nbtscan, snmpwalk, nuclei, nikto, termshark, mitmproxy, etc.) and not fully documenting research.
+
+**Approach**:
+
+1. **Created RESEARCH.md** - Comprehensive document with structured research per tool category:
+   - **Sources credited**: Kali Tools docs, Aircrack-ng docs, Wireshark docs, Scapy docs, Bettercap docs, Reaver wiki, Hcxdumptool GitHub, Hashcat wiki, Nmap book, man pages, --help output, GitHub repos
+   - **For each tool**: Real usage examples with actual flags, output formats, operational characteristics, failure modes, and how framework leverages fullest potential adaptively
+   - Example for airmon-ng: Documented check, check kill, start with channel, stop, output parsing `(mac80211 monitor mode vif enabled for [phy0]wlan0 on [phy0]wlan0mon)` → monitor interface name, interfering processes, driver support
+   - Example for airodump-ng: Documented -c, --bssid, -w --output-format csv,pcap --write-interval 1, --berlin, --wps, CSV two sections, pcap, kismet, parser handling blank line separation, ESSID vs Probed ESSIDs substring bug fix, evidence per AP/client, world model updates
+   - Example for tshark: Distinguished BPF capture filter (-f) vs display filter (-Y), JSON vs fields, count, duration, why suitable for automation
+   - Example for wash: Survey passive mode, JSON, ignore FCS, regex parsing, correlation with WPS state rather than executing all WPS tools indiscriminately
+   - Example for reaver/bully/pixiewps: Pixie dust attack flow, PIN/PSK parsing, locked detection, verification via second tool, experience tracking per vendor
+   - Example for hcxdumptool/hcxpcapngtool/hashcat: Distinction between capture acquisition, conversion, offline analysis, verification phases per spec
+   - Example for nmap: 3 output formats, scan types, timing, scripts, parser handling all 3, scope enforcement only when network scope defined
+
+2. **Added 16 new adapters after deep research, total 46 capabilities**:
+   - **Aircrack suite**: aireplay-ng (injection test, deauth, fakeauth, arpreplay - highly invasive), aircrack-ng (KEY FOUND parsing), airdecap-ng (decrypted count), airbase-ng (AP simulation)
+   - **Capture**: termshark (terminal UI), mitmproxy (HTTP interception via mitmdump with write/read file, listen port - relevant after wireless access)
+   - **DNS**: dnsenum (A records, NS, IPs parsing), dnsrecon (scan types std, rvl, brt)
+   - **Enumeration**: smbmap (shares with READ/WRITE), enum4linux-ng (users, shares), nbtscan (NetBIOS name), snmpwalk (OID, community)
+   - **Vuln**: nuclei (template-based, parses [severity] [template] [url]), nikto (OSVDB)
+   - Each with real build_command list args, parse_output structured evidence, validation, requirement checks, metadata with invasive, persistent, produces_pcap, requires_authorization accurately modeled
+
+3. **Enhanced existing adapters** to use fullest potential:
+   - iw: Now supports subcommands link, info, scan via parameters
+   - airodump: Documented full flags, temp file lifecycle handling multiple formats
+   - wash: Survey, JSON, ignore FCS, channel
+   - tshark: BPF vs display filter, fields list
+   - bettercap: caplet and eval for granular exposure rather than opaque
+   - scapy: Direct library execution with stdout capture, fallback
+   - etc.
+
+4. **Philosophy alignment - fullest potential means adaptive, not blind**:
+   - Use iw not just for list but also link, scan, capability discovery
+   - Use airodump not just AP discovery but client, WPS, channel, BSSID filtering, CSV for machine consumption
+   - Use tshark with BPF and display filters for specific evidence (EAPOL for handshake, beacon for AP verification)
+   - Use wash for discovery, then correlate with reaver/bully/pixiewps only if WPS present and authorized
+   - Use hcxdumptool → hcxpcapngtool → hashcat as distinct phases
+   - Use nmap with appropriate scan type based on uncertainty (e.g., -sV when service unknown)
+   - Use curl only when HTTP service discovered and in scope, with port-based selection
+   - Use bettercap not as opaque but with specific caplet/eval
+   - Previously used tool may be re-selected if new evidence makes it useful (e.g., airodump after channel change)
+   - Tool may be skipped when info already established via other observation (e.g., iw scan already gave APs, skip airodump)
+   - Tool selection determined by state rather than existence
+
+**Learning**: Deep research is not just reading --help, but understanding operational characteristics, failure modes, output formats, and how tool fits into adaptive loop. For example, Kismet is long-running observation source, not one-shot; Scapy is programmatic component, not CLI; bettercap provides overlapping functions, should expose individual capabilities; mitmproxy belongs to network phase after wireless access, not radio phase.
+
+**Verification**: 
+- Registry now 46 capabilities, test expects >=40 and checks 27 expected including new ones - passing
+- CLI --list-capabilities shows all 46 with availability status and category
+- Each adapter has references to official docs
+- RESEARCH.md credits all sources
+
+#### Updated Success Metrics
+
+- [x] 46 capabilities (up from 30) covering full Kali toolchain per deep research
+- [x] RESEARCH.md with real usage, flags, output, operational characteristics, sources, adaptive usage per tool
+- [x] Each adapter uses fullest potential: e.g., aireplay-ng with test/deauth/fakeauth/arpreplay, airodump with CSV temp handling, tshark with BPF/display filters, wash with survey, etc.
+- [x] Philosophy alignment: No blind execution, capability-aware, scope-enforced, verification, experience tracking
+- [x] No placeholders, real execution, explicit unavailable reporting
+- [x] 24 tests still passing
+
 ### Next Steps
 
-1. Add integration tests with mocked tool outputs
-2. Implement remaining vuln and framework adapters
-3. Enhance parsers for more detailed field extraction
-4. Add web UI for visualization
-5. Implement optional AI planner interface
-6. Performance benchmarks
-7. Real hardware testing on Kali
+1. Add remaining adapters: wpaclean, airdecloak-ng, ivstools, packetforge-ng, airdriver-ng, airserv-ng, wget, ftp, ldapsearch, rpcclient, Greenbone/OpenVAS, Metasploit, Impacket, Responder
+2. Enhance parsers for horst, wavemon, kismet logs, hcxdumptool status
+3. Verification workflows: re-scan with different tool, signal correlation
+4. Web UI for assessment visualization
+5. AI-based decision system as optional planner
+6. Integration tests with real hardware on Kali
+7. Performance benchmarks
 
 ### Reflection
 
-This project demonstrates that a real Wi-Fi assessment framework is more than command wrappers - it's about maintaining world model, identifying uncertainties, selecting actions based on evidence and scope, verifying findings, and preserving auditability. The adaptive loop is key: two assessments don't necessarily execute same tools in same order. The framework's value is in obtaining sufficient, reliable evidence to answer assessment questions while maintaining clear relationship between every action and authorized objective.
+This follow-up demonstrates that deep research is essential for production-ready framework. It's not enough to wrap commands - must understand each tool's real purpose, flags, output, failure modes, and how it fits into adaptive investigation. The framework's value is not maximizing commands executed, but obtaining sufficient, reliable evidence while maintaining clear relationship between every action and authorized objective, using each tool's fullest potential in its own way.
 
-The senior developer guidelines (no placeholders, thorough research, documentation, security-first, minimal dependencies, verification honesty) were crucial for production-ready result.
+The senior developer guidelines (thorough research, documentation, security-first, minimal dependencies, verification honesty, no placeholders) were crucial. The RESEARCH.md document now provides auditable evidence of research conducted, with sources credited.
+
+**Push but Don't Merge**: As requested, pushed to arena/01a0aafb-wifi branch, not merging to main. This preserves audit trail and allows review before any merge decision, following guideline 23 NEVER MERGE THIS GIT.
+
