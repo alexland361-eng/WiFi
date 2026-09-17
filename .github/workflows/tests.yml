@@ -44,6 +44,35 @@ jobs:
       - name: Coverage
         run: python -m pytest -q --cov=wifi_framework --cov-report=term-missing
 
+  # Lint and type gate. ruff is blocking on everything the project selects except the
+  # two categories recorded as deferred debt in pyproject.toml (E501 line length, C901
+  # complexity), each with the count measured when the gate was introduced. mypy is
+  # gated against growth rather than against zero: the 34 remaining findings are
+  # recorded in .mypy-baseline, so new ones fail the build and the file is lowered when
+  # old ones are fixed. A gate that fails on day one is a gate nobody runs.
+  quality-gate:
+    name: lint and type gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install ruff mypy
+
+      - name: Ruff
+        run: ruff check src tests scripts --output-format=github
+
+      - name: Mypy baseline
+        run: python scripts/check_type_baseline.py
+
   wireless-hardware:
     name: wireless verification (mac80211_hwsim)
     runs-on: ubuntu-latest

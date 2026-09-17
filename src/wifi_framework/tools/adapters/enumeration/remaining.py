@@ -47,7 +47,7 @@ class LdapsearchAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "base": parameters.get("base"),
             "entries": [],
@@ -105,7 +105,7 @@ class RpcclientAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "command": parameters.get("command", "enumdomusers"),
             "results": [],
@@ -160,7 +160,7 @@ class FtpAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "path": parameters.get("path", "/"),
             "listing": [],
@@ -211,7 +211,7 @@ class WgetAdapter(ToolAdapterBase):
         # For -qO-, raw_output is the content, error_output may have logs
         content = raw_output if raw_output else ""
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "url": parameters.get("url") or parameters.get("target"),
             "content_length": len(content),
             "content_snippet": content[:2000],

@@ -6,7 +6,7 @@ iw dev, iw phy, iw list, etc.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
 
@@ -154,7 +154,7 @@ def parse_iw_link(output: str) -> Dict[str, Any]:
     return result
 
 
-def iw_dev_to_evidences(output: str, interface: str = None, execution_id: str = None) -> List[Evidence]:
+def iw_dev_to_evidences(output: str, interface: Optional[str] = None, execution_id: Optional[str] = None) -> List[Evidence]:
     """Convert iw dev output to evidences."""
     interfaces = parse_iw_dev(output)
     evidences = []

@@ -4,9 +4,10 @@ Registry loader - loads all adapters into global registry.
 from __future__ import annotations
 
 from ..core.execution.registry import CapabilityRegistry
+from typing import Optional
 
 
-def load_all_adapters(registry: CapabilityRegistry = None) -> CapabilityRegistry:
+def load_all_adapters(registry: Optional[CapabilityRegistry] = None) -> CapabilityRegistry:
     """Load all adapters into registry."""
     if registry is None:
         from ..core.execution.registry import get_global_registry

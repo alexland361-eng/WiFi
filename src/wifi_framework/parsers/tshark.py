@@ -60,8 +60,8 @@ def parse_tshark_fields(output: str) -> List[Dict[str, Any]]:
 
 def tshark_to_evidences(
     output: str,
-    interface: str = None,
-    execution_id: str = None,
+    interface: Optional[str] = None,
+    execution_id: Optional[str] = None,
     issues: Optional[List[str]] = None,
 ) -> List[Evidence]:
     """Convert tshark output to evidences.

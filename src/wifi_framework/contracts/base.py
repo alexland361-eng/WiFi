@@ -195,7 +195,7 @@ class BaseContract:
     # ------------------------------------------------------------------ parsing
 
     @classmethod
-    def parse(cls, data: Dict[str, Any], *, registry: Any = None, assume_schema: bool = False) -> "BaseContract":
+    def parse(cls, data: Dict[str, Any], *, registry: Optional[Any] = None, assume_schema: bool = False) -> "BaseContract":
         """
         Build a contract instance from either wire form, validating as it goes.
 

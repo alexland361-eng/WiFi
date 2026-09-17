@@ -239,7 +239,7 @@ class WorldStateView:
     :class:`~wifi_framework.core.planning.planner.AssessmentPlanner` works unchanged.
     """
 
-    def __init__(self, world_state: WorldState, registry: Any = None) -> None:
+    def __init__(self, world_state: WorldState, registry: Optional[Any] = None) -> None:
         self.contract = world_state
         self.registry = registry
         self.id = world_state.assessment_id

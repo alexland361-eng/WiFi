@@ -77,10 +77,10 @@ class AssessmentEngine:
     def __init__(
         self,
         scope: AssessmentScope,
-        registry: CapabilityRegistry = None,
-        audit_logger: AuditLogger = None,
-        experience_store: ExperienceStore = None,
-        assessment_state: AssessmentState = None,
+        registry: Optional[CapabilityRegistry] = None,
+        audit_logger: Optional[AuditLogger] = None,
+        experience_store: Optional[ExperienceStore] = None,
+        assessment_state: Optional[AssessmentState] = None,
         artifact_dir: Optional[str] = None,
         staleness_seconds: int = DEFAULT_STALENESS_SECONDS,
         max_verification_attempts: int = 2,
@@ -255,7 +255,7 @@ class AssessmentEngine:
 
         return list(interfaces.values())
 
-    def discover_capabilities(self, interface: str = None):
+    def discover_capabilities(self, interface: Optional[str] = None):
         """Discover available capabilities in current environment with deep checks."""
         print("[*] Discovering tool capabilities with deep management...")
 
@@ -377,7 +377,7 @@ class AssessmentEngine:
             capability = (
                 metadata.category.value if hasattr(metadata.category, "value") else str(metadata.category)
             )
-        subjects = []
+        subjects: List[str] = []
         context = uncertainty.get("context") or {}
         for key in ("bssids", "finding_ids", "ips", "interfaces", "macs"):
             value = context.get(key)

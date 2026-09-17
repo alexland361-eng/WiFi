@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wifi-framework"
-version = "0.5.1"
+version = "0.6.0"
 description = "Real Wi-Fi penetration-testing and security-assessment framework with adaptive, evidence-driven orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -64,4 +64,36 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90"]
-ignore = []
+# Two categories are deferred rather than dropped, each with the count measured when
+# the configuration was first enforced. Everything else in E/F/W/C90 is clean and
+# gated in CI, so these are the only findings the gate does not fail on.
+#
+# E501 (574 lines over 100 characters, 363 of them in src/) is cosmetic. Reflowing
+# them by hand risks mangling docstrings and reformatting the whole tree with
+# `ruff format` would produce a diff larger than the code it describes, burying any
+# real change made alongside it.
+#
+# C901 (45 functions over the McCabe budget) is real design debt, but satisfying it
+# means refactoring 45 functions, and a behaviour-preserving refactor of that size
+# is exactly where regressions hide. Each one needs its own change with its own
+# tests, not a sweep.
+ignore = ["E501", "C901"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+# Kept at mypy's defaults otherwise. The findings that remain are recorded in
+# .mypy-baseline and gated against growth by scripts/check_type_baseline.py: the
+# count may not rise, and CI says so when it falls.
+#
+# Most of what was there has been fixed rather than suppressed - 194 findings down
+# to 34 by making implicit-Optional parameters explicit and annotating the
+# heterogeneous dicts that made mypy infer a union for every value read back out of
+# them. That also found a real defect: a mixed IPv4/IPv6 authorised scope crashed
+# the network scope check, because subnet_of raises TypeError across address
+# families and the comparison sat outside the surrounding try.
+#
+# The remainder are mostly `str | None` reaching a `str` parameter where a
+# short-circuit guard has already established the value is present. Fixing them
+# properly means narrowing the annotations at the call sites or restructuring the
+# guards, which is a per-site judgement call rather than a sweep.

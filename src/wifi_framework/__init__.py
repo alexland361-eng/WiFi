@@ -13,7 +13,7 @@ determines what information is currently known, identifies important uncertainti
 available action can provide useful additional evidence, and then selects and executes that action.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 __author__ = "WiFi Framework Team"
 
 from .core.models import (

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..models.assessment_state import AssessmentState, ExecutionRecord
 from ..models.evidence import Evidence
@@ -28,7 +28,7 @@ from ...utils.system import ensure_private_dir, tighten_file_mode
 class AuditLogger:
     """Logs all assessment activities for auditability."""
 
-    def __init__(self, log_dir: str = "/tmp/wifi_framework_audit", assessment_id: str = None):
+    def __init__(self, log_dir: str = "/tmp/wifi_framework_audit", assessment_id: Optional[str] = None):
         self.log_dir = log_dir
         self.assessment_id = assessment_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         self.events: List[Dict[str, Any]] = []
@@ -48,7 +48,7 @@ class AuditLogger:
         # default sits under /tmp, which is world-writable and predictable.
         ensure_private_dir(self.log_dir)
 
-    def log_event(self, event_type: str, data: Dict[str, Any], timestamp: datetime = None):
+    def log_event(self, event_type: str, data: Dict[str, Any], timestamp: Optional[datetime] = None):
         """Log an event.
 
         ``data`` is redacted here rather than at each call site. This is the single
@@ -144,7 +144,7 @@ class AuditLogger:
             {"from": from_phase, "to": to_phase, "reason": reason},
         )
 
-    def log_contract(self, contract, *, full_payload: bool = None, summary: Dict[str, Any] = None):
+    def log_contract(self, contract, *, full_payload: Optional[bool] = None, summary: Optional[Dict[str, Any]] = None):
         """
         Log an inter-engine contract message.
 
@@ -188,7 +188,7 @@ class AuditLogger:
             {"action_id": action_id, "stage": stage, "reason": reason},
         )
 
-    def log_verification(self, finding_id: str, method: str, success: bool, evidence_id: str = None):
+    def log_verification(self, finding_id: str, method: str, success: bool, evidence_id: Optional[str] = None):
         self.log_event(
             "verification",
             {
@@ -232,7 +232,7 @@ class AuditLogger:
         # Add traceability: for each finding, show which evidence produced it
         finding_traces = []
         for finding in state.findings:
-            trace = {
+            trace : Dict[str, Any] = {
                 "finding_id": finding.id,
                 "title": finding.title,
                 "status": finding.status.value,
@@ -326,7 +326,7 @@ class AuditLogger:
             )
         return chains
 
-    def save_report(self, state: AssessmentState, output_path: str = None) -> str:
+    def save_report(self, state: AssessmentState, output_path: Optional[str] = None) -> str:
         """Save report to file."""
         report = self.generate_report(state)
         if not output_path:

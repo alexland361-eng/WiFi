@@ -42,7 +42,7 @@ class AdapterExecutionResult:
         error_output: str = "",
         exit_code: int = 0,
         duration: float = 0.0,
-        evidences: List[Evidence] = None,
+        evidences: Optional[List[Evidence]] = None,
         failure_reason: Optional[str] = None,
         raw_command: str = "",
         argv: Optional[List[str]] = None,
@@ -97,7 +97,7 @@ class ToolAdapterBase(ABC):
         return self.metadata.tool_binary
 
     def check_requirements(
-        self, interface: Optional[str] = None, parameters: Dict[str, Any] = None
+        self, interface: Optional[str] = None, parameters: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str]:
         """
         Verify that selected wireless interface, OS, driver, privileges, tool version,
@@ -226,7 +226,7 @@ class ToolAdapterBase(ABC):
         pass
 
     def execute(
-        self, interface: Optional[str] = None, parameters: Dict[str, Any] = None, timeout: int = 30
+        self, interface: Optional[str] = None, parameters: Optional[Dict[str, Any]] = None, timeout: int = 30
     ) -> AdapterExecutionResult:
         """
         Execute the tool with real underlying utility against real wireless interface.

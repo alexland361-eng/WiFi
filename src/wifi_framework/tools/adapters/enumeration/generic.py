@@ -47,7 +47,7 @@ class CurlAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "url": parameters.get("url") or parameters.get("target"),
             "status_code": None,
             "headers": {},
@@ -113,7 +113,7 @@ class OpensslAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "port": parameters.get("port", "443"),
         }
@@ -178,7 +178,7 @@ class SmbclientAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "share": parameters.get("share", ""),
         }

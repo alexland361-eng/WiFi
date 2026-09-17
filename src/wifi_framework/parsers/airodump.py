@@ -84,13 +84,13 @@ def parse_airodump_csv(
     AP headers: BSSID, First time seen, Last time seen, channel, Speed, Privacy, Cipher, Authentication, Power, # beacons, # IV, LAN IP, ID-length, ESSID, Key
     Client headers: Station MAC, First time seen, Last time seen, Power, # packets, BSSID, Probed ESSIDs
     """
-    aps = []
-    clients = []
+    aps: List[Dict[str, Any]] = []
+    clients: List[Dict[str, Any]] = []
 
     # Split into AP and client sections
     # airodump-ng CSV sometimes has blank line separating
     sections = []
-    current_section_lines = []
+    current_section_lines: List[str] = []
     for line in csv_content.splitlines():
         if not line.strip():
             if current_section_lines:
@@ -418,9 +418,9 @@ def _to_int(value: str) -> Optional[int]:
 
 def airodump_to_evidences(
     raw_output: str,
-    csv_content: str = None,
-    interface: str = None,
-    execution_id: str = None,
+    csv_content: Optional[str] = None,
+    interface: Optional[str] = None,
+    execution_id: Optional[str] = None,
     issues: Optional[List[str]] = None,
 ) -> List[Evidence]:
     """Convert airodump output to evidences.

@@ -131,7 +131,7 @@ class ScapyAdapter(ToolAdapterBase):
         return (not errors), errors
 
     def execute(
-        self, interface: str | None = None, parameters: Dict[str, Any] = None, timeout: int = 30
+        self, interface: str | None = None, parameters: Optional[Dict[str, Any]] = None, timeout: int = 30
     ) -> AdapterExecutionResult:
         parameters = dict(parameters or {})
 

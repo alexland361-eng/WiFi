@@ -75,7 +75,7 @@ class ExperienceOutcome:
 class ExperienceEngine:
     """Builds experience records from the contracts a completed action produced."""
 
-    def __init__(self, store: Any = None) -> None:
+    def __init__(self, store: Optional[Any] = None) -> None:
         self.store = store
 
     def record(

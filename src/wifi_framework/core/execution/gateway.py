@@ -193,7 +193,7 @@ class ExecutionGateway:
         artifact_store: Optional[ArtifactStore] = None,
         *,
         executor: Optional[CapabilityExecutor] = None,
-        tool_manager: Any = None,
+        tool_manager: Optional[Any] = None,
         default_timeout: int = 60,
     ) -> None:
         self.registry = registry
@@ -400,7 +400,7 @@ class ExecutionGateway:
         category: str,
         message: str,
         implementation: Optional[str] = None,
-        metadata: Any = None,
+        metadata: Optional[Any] = None,
     ) -> ExecutionResult:
         """
         Build an honest result for an action that was never attempted.

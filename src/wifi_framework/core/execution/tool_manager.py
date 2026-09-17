@@ -365,7 +365,7 @@ class ToolManager:
                 tools[binary] = info
         return tools
 
-    def get_capability_status(self, capability_name: str, interface: str = None) -> Tuple[bool, str, Dict[str, Any]]:
+    def get_capability_status(self, capability_name: str, interface: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Get capability status with deep checks.
 
@@ -459,7 +459,7 @@ class ToolManager:
 
         return chains.get(objective, [])
 
-    def estimate_execution_time(self, capability_name: str, parameters: Dict[str, Any] = None) -> int:
+    def estimate_execution_time(self, capability_name: str, parameters: Optional[Dict[str, Any]] = None) -> int:
         """Estimate execution time based on metadata and parameters."""
         meta = self.registry.get_metadata(capability_name)
         if not meta:

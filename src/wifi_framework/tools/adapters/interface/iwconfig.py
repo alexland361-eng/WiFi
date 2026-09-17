@@ -38,7 +38,7 @@ class IwconfigAdapter(ToolAdapterBase):
         #           ...
 
         current_iface = None
-        current_data = {}
+        current_data: Dict[str, Any] = {}
 
         for line in (raw_output + "\n" + error_output).splitlines():
             if not line.strip():

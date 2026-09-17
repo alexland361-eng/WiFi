@@ -4,7 +4,7 @@ Parser for wash - WPS discovery tool.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
 
@@ -94,7 +94,7 @@ def parse_wash(output: str) -> List[Dict[str, Any]]:
     return results
 
 
-def wash_to_evidences(output: str, interface: str = None, execution_id: str = None) -> List[Evidence]:
+def wash_to_evidences(output: str, interface: Optional[str] = None, execution_id: Optional[str] = None) -> List[Evidence]:
     evidences = []
     parsed = parse_wash(output)
     for entry in parsed:

@@ -100,7 +100,7 @@ class PolicyDecision:
 class ActionPolicy:
     """Validates ActionRequests against scope, capabilities and parameter safety."""
 
-    def __init__(self, registry: Any = None, scope: Optional[AssessmentScope] = None) -> None:
+    def __init__(self, registry: Optional[Any] = None, scope: Optional[AssessmentScope] = None) -> None:
         self.registry = registry
         self.scope = scope
 
@@ -263,7 +263,7 @@ class ActionPolicy:
         self,
         action: ActionRequest,
         state: Optional[AssessmentState],
-        metadata: Any = None,
+        metadata: Optional[Any] = None,
         implementation: Optional[str] = None,
     ) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
@@ -537,7 +537,21 @@ class ActionPolicy:
                 allowed_network = ipaddress.ip_network(authorised, strict=False)
             except ValueError:
                 continue
-            if candidate.subnet_of(allowed_network) or candidate == allowed_network:
+            if allowed_network.version != candidate.version:
+                # ``subnet_of`` raises TypeError across address families rather than
+                # returning False, and this comparison sits outside the try above. A
+                # scope authorizing both an IPv4 and an IPv6 network therefore crashed
+                # the check - and whether it crashed depended on declaration order,
+                # because an entry that matched first returned before the mismatched
+                # one was reached. An address is never inside an authorization of the
+                # other family, so the pair is simply not a match.
+                continue
+            # The family check above establishes what mypy cannot narrow from an int
+            # attribute comparison: both operands are the same address family here.
+            # isinstance narrowing does not help either, since mypy will not correlate
+            # the types of two variables across branches. The invariant is tested
+            # (test_policy.py, mixed-family scope) rather than asserted.
+            if candidate.subnet_of(allowed_network) or candidate == allowed_network:  # type: ignore[arg-type]
                 return True
         return False
 

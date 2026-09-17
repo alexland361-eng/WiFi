@@ -804,8 +804,192 @@ Recorded so the reasoning is available rather than lost:
   ground-truth scenario set defined first.
 - Property-based testing. It would add `hypothesis` as a dependency;
   `scripts/exercise_framework.py` already fuzzes 11 parsers against 14 malformed inputs.
-- A full ruff/mypy/coverage gate as one change. Worth doing, but as a separate
-  decision - it produces churn across every module at once.
+- Coverage gated in CI. Ruff and mypy landed in 0.6.0: ruff blocking on everything the
+  project selects except the two categories recorded as deferred debt in `pyproject.toml`,
+  and mypy gated against growth past `.mypy-baseline`. Coverage is measured by the
+  `unit-tests` job but not enforced, because a threshold picked without a baseline is a
+  number that gets adjusted until it passes.
+
+## [0.6.0] - 2026-09-17
+
+Silent-failure audit, followed by the first enforced lint and type gate. The pass started
+from one question applied across the codebase: *what happens when this handler's `except`
+branch runs?* Nineteen sites swallowed a failure and continued. Most were legitimate -
+numeric coercion with a sensible default, a sysfs read on hardware that may not exist -
+but six were defects, and every one of them had the same shape: a failure that made the
+framework report less than it knew, so an operator or the World Model saw an empty result
+instead of a broken one.
+
+The gate then found a seventh defect that no amount of reading had surfaced: a mixed
+IPv4/IPv6 authorized scope crashed the network scope check.
+
+Every fix is mutation-checked - reverted in place, its tests confirmed to fail, restored.
+
+### Fixed
+
+#### Silent failures that made the framework report less than it knew
+
+- **A truncated or malformed tool document was reported as an empty result** (`db29cff`).
+  `parse_nmap_xml` caught `ET.ParseError` and returned no hosts; `parse_tshark_json` caught
+  `JSONDecodeError` and returned no packets. A capture stopped mid-write and a scan that
+  genuinely found nothing were indistinguishable downstream, and the World Model recorded
+  "no hosts observed" as a fact about the network. Both parsers now take an optional
+  `issues` list and append what went wrong; `AdapterExecutionResult` and `ExecutionResult`
+  carry `parse_warnings`, and `EvidenceEngine` folds them into `EvidenceSet.parse_issues`,
+  which reaches the assessment report. A parse problem is not an execution failure: the
+  tool ran and exited 0, so the action is not marked failed and not retried.
+- **airodump-ng screen output was parsed by a loop that discarded its own result**
+  (`1979737`). `parse_airodump_text` matched a BSSID regex on every line into a local
+  variable and then `pass`, returning two empty lists unconditionally. It was the live
+  fallback, not dead code: with no `--write` CSV found, an assessment that failed to read a
+  busy capture recorded "no access points observed". Screen output is now parsed for real
+  using the column offsets in the header the tool printed, which is what makes it survive
+  the layout differences between versions (`PWR RXQ` versus `PWR`). Two fields are
+  deliberately *not* extracted, because a wrong value becomes fabricated evidence: client
+  probe requests and associations, where `Rate` prints as `0e- 1` and the probe text does
+  not start under its header, so slicing returned `stNetwork` for `TestNetwork`. The CSV
+  parser's three bare `except Exception: continue` blocks now report too.
+- **Failed permission restrictions were invisible** (`475b176`). `tighten_file_mode` caught
+  `OSError` and returned nothing, so a capture left world-readable had no signal anywhere -
+  silently undoing the reason the file was created owner-only. It now returns whether the
+  file is actually restricted, verified by reading the resulting mode rather than trusting
+  that `chmod` succeeded. `ensure_private_dir` was also inconsistent: tightening an existing
+  directory raised a bare `PermissionError`, while the same failure on a newly created one
+  was swallowed - and every fresh assessment takes the second path. Both now go through
+  `require_private`, which verifies the outcome and raises with the path and actual mode.
+- **Files the framework adopts were never restricted** (`475b176`). `ArtifactStore.register_file`
+  recorded a file the tool wrote itself - an airodump-ng pcap, a kismet log - at whatever
+  mode the tool's umask produced, typically 0644. A pcap holds whole conversations rather
+  than a summary of them, so restricting only framework-written files left the most
+  sensitive artifacts of all world-readable. Adoption is now best effort and recorded
+  rather than fatal: the file may belong to another uid if the tool ran elevated, and an
+  artifact worth keeping is worth keeping with a warning attached.
+- **An authorization entry that failed to parse vanished** (`ccf7329`). An invalid BSSID or
+  network CIDR was dropped in `AssessmentScope.__post_init__` with a comment saying
+  validation would catch it - but `validate()` is called from one place, the CLI. A scope
+  built programmatically, which is how the engine and every script build one, never reported
+  anything. The direction is fail-safe, since a dropped entry narrows what is authorized,
+  but the result is an operator who believes `192.168.1.0/24` is authorized, watches every
+  action against it get refused, and sees a reason that looks like a scope violation rather
+  than a typo. Dropped entries are recorded on the scope and carried in `to_dict()`, which
+  is what `log_scope` writes.
+- **`AssessmentScope.validate()` raised on the input it exists to report** (`ccf7329`). The
+  channel check was `1 <= ch <= 196`, so a channel declared as a string raised `TypeError` -
+  a crash in the one function whose job is to say "this scope is malformed". It now coerces
+  through a helper that reports instead of raising, and refuses a value that does not
+  survive the round trip: `int(6.5)` is 6, a valid channel, so a naive coercion would have
+  rounded a malformed declaration into an authorized one.
+- **A mixed IPv4/IPv6 authorized scope crashed the network scope check** (found by mypy).
+  `IPv4Network.subnet_of(IPv6Network)` raises `TypeError` rather than returning False, and
+  the comparison sat outside the surrounding `try`. With both families authorized, an
+  in-scope IPv6 address raised instead of returning True and an out-of-scope IPv4 address
+  raised instead of being refused - and whether it raised depended on the order the entries
+  were declared, because an entry that matched first returned before the mismatched one was
+  reached. `in` handles a version mismatch safely, which is why `is_ip_authorized` never had
+  this bug; a test pins that distinction so a future change from one to the other cannot
+  reintroduce it.
+
+#### A validator that validated nothing
+
+- **`ToolAdapterBase.validate_parameters` enforced nothing** (`f1f3981`). It computed the
+  capability's required inputs into a local variable, discarded it, and returned
+  `custom_parameter_validation` - whose default accepts everything and whose docstring
+  claimed it checked metadata inputs. An adapter invoked without an input it cannot work
+  with went on to build a command line missing that argument, and the tool's own complaint
+  arrived as a runtime failure instead of a refusal naming the missing input.
+
+  Two things had to be settled before enforcing was safe. `interface` reaches `execute()` as
+  its own argument rather than as a key in `parameters`, so checking `parameters` alone
+  would have refused every normal invocation of the 30 capabilities that declare an
+  interface - which is plausibly why the variable was left unused rather than wired up. And
+  enforcement is only sound if metadata and implementation agree on names, so the AST of all
+  58 adapters was walked, comparing declared non-optional inputs against the parameter keys
+  their own `build_command` reads: zero mismatches.
+
+  This is not redundant with the adapters' own hooks. For `aireplay-ng`, `airmon-ng` and
+  `rfkill` the base check is the *only* thing that catches a missing required `action`. Both
+  layers report rather than one short-circuiting, so an operator sees every problem with an
+  invocation at once.
+
+#### Other defects found by reading the discarded values
+
+- `AuditLogger.save_report` wrapped the report write in `try: ... except OSError as e:
+  raise` - a handler that re-raises unchanged, binding a name nothing reads (`f1f3981`).
+- `VerificationEngine.request_for_finding` built the sorted set of tools behind a finding and
+  never used it. Nothing in `VerificationRequest` takes a tool list;
+  `min_independent_sources` is a count the verifier computes from the evidence it gathers
+  itself. Removed rather than inventing a field to justify it (`f1f3981`).
+- `cmd_list_capabilities` constructed an `InterfaceManager` and never used it (`f1f3981`).
+- `test_scope_enforcer_strict` built a strict-mode enforcer and asserted nothing about it, so
+  the test named for strict mode only ever exercised `allow_broadcast_discovery`. It now
+  asserts what strict mode alone does and does not do: passive observation of an unauthorized
+  SSID is still permitted, acting on it is not (`f1f3981`).
+- `utils/validation.validate_parameters` annotated its `validators` argument as
+  `Dict[str, callable]`, using the builtin function as a type (`f1f3981`).
+
+### Added
+
+- **`ExecutionResult.parse_warnings`**, separate from `warnings`. Parse problems rode the
+  general warning list first, but the Evidence Engine now folds that list into
+  `EvidenceSet.parse_issues` - so any general advisory, including the new permission
+  warnings, would have been reported as an extraction problem. A test asserts a general
+  warning does not become a parse issue (`475b176`).
+- **`utils.system.require_private(path, mode)`**, raising `RuntimeError` with the path and
+  the actual mode when a directory stays group- or other-accessible. Verifies the outcome
+  rather than the syscall, so a filesystem that ignores `chmod` is not an error when the
+  mode is already correct (`475b176`).
+- **Permission failures surface in three places rather than one**, because a list nobody
+  reads is the same as no list: `ArtifactStore.permission_failures`,
+  `permission_failure_count` in the store's stats (printed in the assessment summary), and a
+  warning on `ExecutionResult` naming the file, which reaches the audit trail (`475b176`).
+- **`AssessmentScope.invalid_bssids` / `invalid_networks`**, recorded at construction and
+  carried in `to_dict()`, so the audit trail shows what was requested *and* what was
+  unusable without depending on a caller remembering to call `validate()` (`ccf7329`).
+- **A lint and type gate** (`quality-gate` CI job). `ruff check src tests scripts` is
+  blocking on everything the project selects except the two categories recorded as deferred
+  debt in `pyproject.toml`, each with the count measured when the gate was introduced.
+  `scripts/check_type_baseline.py` gates mypy against *growth* rather than against zero: the
+  34 remaining findings are recorded in `.mypy-baseline`, so a new one fails the build and
+  the file is lowered when an old one is fixed. A gate that fails on day one is a gate
+  nobody runs.
+
+### Changed
+
+- **The project's own lint configuration is enforced for the first time.** `pyproject.toml`
+  selected E, F, W and C90 at line-length 100, but nothing ran it, so 722 findings had
+  accumulated. All the correctness classes are now clear: 71 unused imports, 13 computed-and-
+  discarded locals, 9 f-strings with no placeholders, 4 ambiguous `l` loop variables
+  (indistinguishable from `1` in a terminal), 6 imports stranded mid-file, and a dead
+  `csv_path` assignment duplicating the first entry of the `possible_paths` list below it.
+- **mypy findings reduced from 194 to 34**, by fixing rather than suppressing: implicit-
+  Optional parameters made explicit (`interface: str = None` is an annotation that lies,
+  across 40 sites), and the heterogeneous dicts annotated. The second change cascaded -
+  annotating `parsed: Dict[str, Any]` removed 21 `union-attr` findings at once, because
+  mypy had been inferring a union for every value read back out of a dict literal holding
+  mixed types. That reduction is what exposed the IPv6 scope defect above.
+- `E501` (574 lines over 100 characters) and `C901` (45 functions over the McCabe budget)
+  are deferred with the reason and the measured count recorded in `pyproject.toml`, not
+  silently ignored. Reflowing 574 lines by hand risks mangling docstrings, and reformatting
+  the whole tree would produce a diff larger than the code it describes. Satisfying C901
+  means refactoring 45 functions, and a behaviour-preserving refactor of that size is exactly
+  where regressions hide; each needs its own change with its own tests.
+
+### Tests
+
+- 734 passing with scapy installed, 731 plus 3 skipped without. Up from 650 at 0.5.1.
+- `scripts/exercise_framework.py` reports 61/69 with 11 skipped, unchanged - the 8 failures
+  and 11 skips are the sandbox having no wireless hardware and none of the 52 declared tools
+  installed, each recorded with the reason rather than counted as a pass.
+- New tests: 16 for parse-problem reporting, 17 for storage permissions, 18 for malformed
+  scope entries and `validate()`, 26 for the channel scope-gate coupling, 18 for airodump
+  screen output and CSV failures, 14 for declared-input enforcement, 6 for mixed-family
+  scope. Each batch mutation-checked.
+- The channel scope gate skips a channel it cannot coerce to `int()`, with a comment saying
+  parameter validation reports it. That is correct today - both sides do the identical
+  conversion catching the identical exceptions - but nothing pinned it, and if parameter
+  validation ever accepted a value `int()` rejects, an out-of-scope channel would pass both
+  checks. 26 tests now pin both halves, measured through the real policy rather than
+  inferred. Breaking the coupling fails 12 of them, including an end-to-end scope case.
 
 ## [Unreleased]
 

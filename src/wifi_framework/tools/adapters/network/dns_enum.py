@@ -58,7 +58,7 @@ class DnsenumAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "domain": parameters.get("domain") or parameters.get("target"),
             "hosts": [],
             "ips": [],
@@ -127,7 +127,7 @@ class DnsreconAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "domain": parameters.get("domain") or parameters.get("target"),
             "records": [],
         }

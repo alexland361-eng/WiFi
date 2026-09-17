@@ -3,7 +3,7 @@ Capability checker - verifies interface, OS, driver, privileges, tool version, e
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
 from ...utils.system import (
@@ -27,7 +27,7 @@ class CapabilityChecker:
         #: way to administer wireless interfaces.
         self.capabilities = sorted(effective_capabilities())
 
-    def check(self, capability: ToolCapabilityMetadata, interface: str = None) -> Tuple[bool, str, Dict]:
+    def check(self, capability: ToolCapabilityMetadata, interface: Optional[str] = None) -> Tuple[bool, str, Dict]:
         """
         Check capability availability.
 

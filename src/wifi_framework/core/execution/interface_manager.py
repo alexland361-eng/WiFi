@@ -133,7 +133,7 @@ class InterfaceManager:
 
         return False, f"Failed to set channel: {stderr} {stderr2}"
 
-    def create_monitor_interface(self, interface: str, channel: int = None) -> Tuple[bool, str, Optional[str]]:
+    def create_monitor_interface(self, interface: str, channel: Optional[int] = None) -> Tuple[bool, str, Optional[str]]:
         """
         Create monitor interface via airmon-ng or iw.
 
@@ -198,7 +198,7 @@ class InterfaceManager:
         self.set_interface_up(interface)
         return False, f"Failed to create monitor: {stderr} {stderr2}", None
 
-    def remove_monitor_interface(self, monitor_interface: str, original_interface: str = None) -> Tuple[bool, str]:
+    def remove_monitor_interface(self, monitor_interface: str, original_interface: Optional[str] = None) -> Tuple[bool, str]:
         """Remove monitor interface via airmon-ng stop or iw."""
         if not check_interface_exists(monitor_interface):
             return False, f"Monitor interface {monitor_interface} does not exist"
@@ -227,7 +227,7 @@ class InterfaceManager:
         self.set_interface_up(monitor_interface)
         return False, f"Failed to remove monitor: {stderr} {stderr2}"
 
-    def change_mac(self, interface: str, mac: str = None, random: bool = False) -> Tuple[bool, str, Optional[str]]:
+    def change_mac(self, interface: str, mac: Optional[str] = None, random: bool = False) -> Tuple[bool, str, Optional[str]]:
         """
         Change MAC via macchanger.
 

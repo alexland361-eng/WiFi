@@ -67,7 +67,7 @@ class MetasploitAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "module": parameters.get("module"),
             "rhosts": parameters.get("rhosts"),
             "action": parameters.get("action", "check"),
@@ -157,7 +157,7 @@ class ImpacketAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "impacket_tool": parameters.get("impacket_tool", "psexec"),
             "target": parameters.get("target"),
         }
@@ -213,7 +213,7 @@ class ResponderAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "interface": interface or parameters.get("interface"),
             "captured_hashes": [],
         }
@@ -264,7 +264,7 @@ class OpenVASAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "target": parameters.get("target"),
             "version_info": combined[:1000],
         }

@@ -18,7 +18,7 @@ def parse_nmap_grepable(output: str) -> List[Dict[str, Any]]:
     Host: 192.168.1.1 () Status: Up
     Host: 192.168.1.1 () Ports: 22/open/tcp//ssh//OpenSSH 7.9/
     """
-    hosts = {}
+    hosts: Dict[str, Any] = {}
     for line in output.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -74,7 +74,7 @@ def parse_nmap_grepable(output: str) -> List[Dict[str, Any]]:
 def parse_nmap_normal(output: str) -> List[Dict[str, Any]]:
     """Parse nmap normal output."""
     hosts = []
-    current_host = None
+    current_host: Optional[Dict[str, Any]] = None
 
     for line in output.splitlines():
         line = line.strip()
@@ -145,7 +145,9 @@ def parse_nmap_xml(xml_content: str, issues: Optional[List[str]] = None) -> List
             hostname_elem = host_elem.find("hostnames/hostname")
             hostname = hostname_elem.get("name") if hostname_elem is not None else None
 
-            host_data = {"ip": ip, "hostname": hostname, "ports": [], "status": status}
+            host_data: Dict[str, Any] = {
+                "ip": ip, "hostname": hostname, "ports": [], "status": status
+            }
 
             ports_elem = host_elem.find("ports")
             if ports_elem is not None:
@@ -188,8 +190,8 @@ def parse_nmap_xml(xml_content: str, issues: Optional[List[str]] = None) -> List
 
 def nmap_to_evidences(
     output: str,
-    target: str = None,
-    execution_id: str = None,
+    target: Optional[str] = None,
+    execution_id: Optional[str] = None,
     issues: Optional[List[str]] = None,
 ) -> List[Evidence]:
     """Convert nmap output to evidences.

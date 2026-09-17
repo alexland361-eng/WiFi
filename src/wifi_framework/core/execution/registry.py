@@ -51,14 +51,14 @@ class CapabilityRegistry:
     def list_by_category(self, category) -> List[ToolCapabilityMetadata]:
         return [cap for cap in self._capabilities.values() if cap.category == category]
 
-    def check_availability(self, name: str, interface: str = None):
+    def check_availability(self, name: str, interface: Optional[str] = None):
         """Check if capability is available in current environment."""
         metadata = self.get_metadata(name)
         if not metadata:
             return False, f"Capability {name} not registered", {}
         return self._checker.check(metadata, interface)
 
-    def get_available_capabilities(self, interface: str = None) -> Dict[str, ToolCapabilityMetadata]:
+    def get_available_capabilities(self, interface: Optional[str] = None) -> Dict[str, ToolCapabilityMetadata]:
         """Get all capabilities available in current environment."""
         available = {}
         for name, meta in self._capabilities.items():
@@ -67,7 +67,7 @@ class CapabilityRegistry:
                 available[name] = meta
         return available
 
-    def get_unavailable_capabilities(self, interface: str = None) -> Dict[str, str]:
+    def get_unavailable_capabilities(self, interface: Optional[str] = None) -> Dict[str, str]:
         """Get unavailable capabilities with reasons."""
         unavailable = {}
         for name, meta in self._capabilities.items():

@@ -666,3 +666,104 @@ def test_an_in_scope_channel_is_not_refused_by_the_scope_gate():
         assert rejection.get("code") != "invalid_channel", (
             f"channel {channel!r} is a valid channel but parameter validation refused it"
         )
+
+
+# --------------------------------------------- mixed IPv4/IPv6 authorized scope
+#
+# `subnet_of` raises TypeError across address families instead of returning False, and
+# the comparison sat outside the surrounding try. A scope authorizing both an IPv4 and an
+# IPv6 network therefore crashed the scope check - and whether it crashed depended on the
+# order the entries were declared, because an entry that matched first returned before the
+# mismatched one was reached. Found by the type checker, not by a test.
+
+
+def test_a_scope_authorizing_both_families_authorizes_both():
+    from wifi_framework.core.policy.validator import ActionPolicy
+
+    scope = AssessmentScope(authorized_networks=["10.0.0.0/24", "2001:db8::/32"])
+
+    assert ActionPolicy._network_in_scope("10.0.0.5", scope, False) is True
+    assert ActionPolicy._network_in_scope("2001:db8::5", scope, False) is True
+
+
+def test_a_scope_authorizing_both_families_refuses_addresses_in_neither():
+    from wifi_framework.core.policy.validator import ActionPolicy
+
+    scope = AssessmentScope(authorized_networks=["10.0.0.0/24", "2001:db8::/32"])
+
+    assert ActionPolicy._network_in_scope("11.0.0.5", scope, False) is False
+    assert ActionPolicy._network_in_scope("2001:db9::5", scope, False) is False
+
+
+def test_the_scope_answer_does_not_depend_on_declaration_order():
+    """The crash was order-dependent: an IPv4 candidate against an IPv4-first scope
+    matched before the mismatched comparison was reached, and against an IPv6-first scope
+    it raised. Same scope, same answer, either way round."""
+    from wifi_framework.core.policy.validator import ActionPolicy
+
+    forward = AssessmentScope(authorized_networks=["10.0.0.0/24", "2001:db8::/32"])
+    reversed_ = AssessmentScope(authorized_networks=["2001:db8::/32", "10.0.0.0/24"])
+
+    for network in ["10.0.0.5", "2001:db8::5", "11.0.0.5", "2001:db9::5"]:
+        assert ActionPolicy._network_in_scope(network, forward, False) is (
+            ActionPolicy._network_in_scope(network, reversed_, False)
+        ), f"{network} depends on the order the networks were declared"
+
+
+def test_an_ipv6_network_parameter_does_not_crash_validation():
+    """End to end through the policy: the `network` parameter is read from the request and
+    checked against the authorized networks, so this is the path that raised."""
+    registry = load_all_adapters(CapabilityRegistry())
+    scope = AssessmentScope(
+        authorized_networks=["10.0.0.0/24", "2001:db8::/32"],
+        authorized_hosts=["10.0.0.1"],
+    )
+    policy = ActionPolicy(scope=scope, registry=registry)
+
+    result = policy.validate(
+        request(
+            "nmap",
+            "nmap",
+            parameters={"target": "10.0.0.1", "network": "2001:db8::/64"},
+        )
+    )
+    rejection = result.rejection or {}
+    assert rejection.get("code") != "scope_denied_network", (
+        "2001:db8::/64 is inside the authorised 2001:db8::/32"
+    )
+
+
+def test_an_out_of_scope_ipv6_network_is_refused_not_crashed():
+    registry = load_all_adapters(CapabilityRegistry())
+    scope = AssessmentScope(
+        authorized_networks=["10.0.0.0/24", "2001:db8::/32"],
+        authorized_hosts=["10.0.0.1"],
+    )
+    policy = ActionPolicy(scope=scope, registry=registry)
+
+    result = policy.validate(
+        request(
+            "nmap",
+            "nmap",
+            parameters={"target": "10.0.0.1", "network": "2001:db9::/64"},
+        )
+    )
+
+    assert result.status == "rejected"
+    rejection = result.rejection or {}
+    assert rejection.get("stage") == "scope", rejection
+    assert rejection.get("code") == "scope_denied_network", rejection
+
+
+def test_membership_checks_across_families_are_already_safe():
+    """Pinned so the distinction stays understood: `in` returns False across families,
+    which is why `is_ip_authorized` never had this bug, while `subnet_of` raises. A future
+    change from one to the other would reintroduce it."""
+    import ipaddress
+
+    assert (ipaddress.ip_address("10.0.0.1") in ipaddress.ip_network("2001:db8::/32")) is False
+
+    scope = AssessmentScope(authorized_networks=["10.0.0.0/24", "2001:db8::/32"])
+    assert scope.is_ip_authorized("10.0.0.5") is True
+    assert scope.is_ip_authorized("2001:db8::5") is True
+    assert scope.is_ip_authorized("11.0.0.5") is False

@@ -7,7 +7,7 @@ Deep research: Tools have dependencies (e.g., airmon-ng needs iw, hashcat needs 
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
 from .registry import CapabilityRegistry
@@ -19,15 +19,15 @@ class DependencyResolver:
     def __init__(self, registry: CapabilityRegistry):
         self.registry = registry
 
-    def resolve_dependencies(self, capability_name: str, visited: Set[str] = None) -> Tuple[List[str], List[str]]:
+    def resolve_dependencies(self, capability_name: str, visited: Optional[Set[str]] = None) -> Tuple[List[str], List[str]]:
         """
         Resolve dependencies for capability.
 
         Returns (ordered_dependencies, missing_dependencies)
         """
         visited = visited or set()
-        ordered = []
-        missing = []
+        ordered: List[str] = []
+        missing: List[str] = []
 
         if capability_name in visited:
             return ordered, missing  # Avoid cycles
@@ -72,7 +72,7 @@ class DependencyResolver:
 
         return ordered, missing
 
-    def get_execution_plan(self, objectives: List[str], available_capabilities: Dict[str, ToolCapabilityMetadata] = None) -> List[Dict[str, Any]]:
+    def get_execution_plan(self, objectives: List[str], available_capabilities: Optional[Dict[str, ToolCapabilityMetadata]] = None) -> List[Dict[str, Any]]:
         """
         Get execution plan for objectives.
 
@@ -98,8 +98,8 @@ class DependencyResolver:
                 unique_caps.append(cap)
 
         # Resolve dependencies for each
-        ordered_plan = []
-        visited = set()
+        ordered_plan: List[Dict[str, Any]] = []
+        visited: Set[str] = set()
 
         for cap_name in unique_caps:
             deps, missing = self.resolve_dependencies(cap_name, visited.copy())
@@ -125,7 +125,7 @@ class DependencyResolver:
 
         return ordered_plan
 
-    def check_tool_chain_feasibility(self, chain: List[str], interface: str = None) -> Tuple[bool, List[str], Dict[str, str]]:
+    def check_tool_chain_feasibility(self, chain: List[str], interface: Optional[str] = None) -> Tuple[bool, List[str], Dict[str, str]]:
         """
         Check if tool chain is feasible in current environment.
 

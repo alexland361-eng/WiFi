@@ -64,7 +64,7 @@ class CapabilityExecutor:
         self.assessment_state = assessment_state
 
     def generate_parameters_from_state(
-        self, capability_name: str, state: AssessmentState, overrides: Dict[str, Any] = None
+        self, capability_name: str, state: AssessmentState, overrides: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Automatically derive and validate parameters from current assessment state.
@@ -156,7 +156,7 @@ class CapabilityExecutor:
         self,
         capability_name: str,
         interface: Optional[str] = None,
-        parameters: Dict[str, Any] = None,
+        parameters: Optional[Dict[str, Any]] = None,
         timeout: int = 60,
         state: Optional[AssessmentState] = None,
         record_state: bool = True,

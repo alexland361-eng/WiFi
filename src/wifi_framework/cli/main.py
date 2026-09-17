@@ -15,6 +15,7 @@ from ..core.execution.dependency_resolver import DependencyResolver
 from ..tools.registry_loader import load_all_adapters
 from ..core.audit.logger import AuditLogger
 from ..core.experience.store import ExperienceStore
+from typing import Optional
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -193,7 +194,7 @@ def load_scope_from_args(args) -> AssessmentScope:
     return scope
 
 
-def cmd_list_capabilities(registry, interface: str = None):
+def cmd_list_capabilities(registry, interface: Optional[str] = None):
     """List capabilities with deep tool management."""
     print("=== Registered Capabilities (Deep Management) ===")
 
@@ -252,7 +253,7 @@ def cmd_list_capabilities(registry, interface: str = None):
                 print(f"  Alternatives: {alternatives[:3]}")
 
 
-def cmd_discover_only(scope: AssessmentScope, output_dir: str = None):
+def cmd_discover_only(scope: AssessmentScope, output_dir: Optional[str] = None):
     """Run discovery only."""
     print("[*] Running discovery only mode")
 

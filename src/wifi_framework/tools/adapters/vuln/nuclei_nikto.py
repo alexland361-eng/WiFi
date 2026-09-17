@@ -54,7 +54,7 @@ class NucleiAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "target": parameters.get("target") or parameters.get("url") or parameters.get("host"),
             "vulnerabilities": [],
         }
@@ -132,7 +132,7 @@ class NiktoAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "target": parameters.get("target") or parameters.get("host") or parameters.get("url"),
             "findings": [],
         }

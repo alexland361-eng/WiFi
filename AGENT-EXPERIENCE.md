@@ -1043,3 +1043,173 @@ four jobs, including the hwsim wireless job (17/17 checks, 12/12 capture and inj
   is retained - but inconsistent with `discovery_errors` elsewhere.
 - Three further best-effort silent handlers remain: `interface_manager.py` (channel parse
   skip) and two in `utils/system.py` (version probe loop, interface list fallback).
+
+## Session: 2026-09-17 - Silent-Failure Audit and the First Enforced Quality Gate (v0.6.0)
+
+### Context
+
+This pass did not start from a bug report. It started from one question applied across the
+codebase: *what happens when this handler's `except` branch runs?* Grepping for swallowed
+exceptions found nineteen sites. Most were legitimate - numeric coercion with a sensible
+default, a sysfs read on hardware that may not be there. Six were defects, and all six had
+the same shape: a failure that made the framework report **less than it knew**, so an
+operator or the World Model saw an empty result where the truth was a broken one.
+
+Fixing those six, then running the project's own declared lint configuration for the first
+time, found a seventh that no amount of reading had surfaced: a mixed IPv4/IPv6 authorized
+scope crashed the network scope check.
+
+Test count 650 -> 734. Ruff findings in the gated set 722 -> 0. Mypy findings 194 -> 34.
+Six commits, every fix mutation-checked.
+
+### Challenges Encountered
+
+- **The most dangerous fallback was one that always returned nothing.**
+  `parse_airodump_text` looped over every line, matched a BSSID regex into a local, and then
+  `pass` - returning two empty lists unconditionally. It read like a stub someone would
+  finish later. It was not: it was the live path whenever no `--write` CSV was found, so an
+  assessment that failed to parse a busy capture recorded "no access points observed", and
+  the World Model stored that as a fact about the radio environment. **Lesson: an unconditionally
+  empty return inside a real call path is worse than a raised NotImplementedError, because
+  nothing downstream can tell it apart from a true negative. When auditing, follow the
+  callers of every stub before assuming it is dead.**
+
+- **Implementing that stub naively made things worse, and only a probe caught it.** The
+  first real screen-output parser read every column by slicing between header offsets. That
+  produced `ch=None` and `pwr=None` for every access point, because unnamed columns fall
+  inside a recognized span - `CH   MB   ENC` puts MB inside CH's span, so the slice was
+  `"11  130"` and the int conversion failed. Worse, it read a client's probe request as
+  `stNetwork` instead of `TestNetwork`: `Rate` prints as `0e- 1`, a value containing a
+  space, and the probe text does not start under its header. **A truncated SSID attached to
+  a client becomes evidence, and it is fabricated.** The fix was to take the leading token
+  of each numeric span, and to leave the two fields that cannot be read reliably *unset*
+  with a parse warning saying so. **Lesson: for a parser, wrong data is worse than absent
+  data, because absent data is a gap the framework can report and wrong data is a lie it
+  will act on. Probe against fixtures in both known layouts before trusting an extraction.**
+
+- **A type checker found the bug that reading did not - but only after the noise was
+  reduced.** `validator.py` called `candidate.subnet_of(allowed_network)` outside its `try`.
+  `IPv4Network.subnet_of(IPv6Network)` raises `TypeError` rather than returning False, so a
+  scope authorizing both families crashed the check - and *whether* it crashed depended on
+  the order the networks were declared, because a matching entry returned before the
+  mismatched one was reached. This was invisible in 194 findings. It became visible at 34.
+  Getting there was mechanical: making implicit-Optional parameters explicit (40 sites), and
+  annotating the heterogeneous dicts. Annotating `parsed: Dict[str, Any]` alone removed 21
+  `union-attr` findings at once, because mypy had been inferring a union for every value read
+  back out of a dict literal holding mixed types. **Lesson: type-checker output is dominated
+  by noise, and the noise hides the signal. Pay down the mechanical categories first - the
+  real defect was in the residue.**
+
+- **mypy cannot correlate two variables across branches, and the honest fix was a coded
+  ignore.** After adding the version guard, mypy still flagged `subnet_of`, because narrowing
+  on an int attribute comparison is not something it does. Rewriting the guard as nested
+  `isinstance` checks did not help either - mypy will not track "if candidate is v4 then
+  allowed is v4" across the two. The resolution was to keep the readable runtime guard, add
+  `# type: ignore[arg-type]` with the precise code, and say in the comment that the invariant
+  is established above and *tested* rather than asserted. The repo already had exactly one
+  such ignore, so there was a convention to follow. **Lesson: a suppression is legitimate when
+  the runtime invariant is real, the checker provably cannot express it, and a test pins it.
+  All three conditions have to hold, and the comment has to say which test.**
+
+- **Enforcing a validator meant first proving the metadata matched the implementation.**
+  `ToolAdapterBase.validate_parameters` computed the capability's required inputs, discarded
+  them, and returned a hook whose default accepts everything - a method named
+  `validate_parameters` that validated nothing. Wiring it up naively would have been actively
+  harmful twice over: `interface` reaches `execute()` as its own argument rather than as a key
+  in `parameters`, so checking `parameters` alone would refuse every normal invocation of the
+  30 capabilities that declare an interface; and if any adapter read a declared input under a
+  different key, enforcement would refuse a parameter the adapter knows by another name. So
+  before enforcing, the AST of all 58 adapters was walked, comparing declared non-optional
+  inputs against the `parameters.get(...)` keys their own `build_command` reads: zero
+  mismatches. **Lesson: turning on a dormant check is a behaviour change, not a cleanup. Audit
+  the data it will be applied to first, and find out why it was dormant - here the unused
+  variable was evidence that someone had already hit the first problem.**
+
+- **Backward compatibility is found by grepping callers, not by reasoning about signatures.**
+  Restructuring `airodump_to_evidences` to stop offering screen text to the CSV parser looked
+  obviously correct, and would have broken `scripts/exercise_framework.py`, which calls it
+  positionally with CSV content as `raw_output`. A related trap: the existing
+  `csv_content or raw_output` is a truthiness test, so an explicitly *empty* CSV fell through
+  to parsing screen text and produced complaints about a malformed CSV section that was never
+  declared. `csv_content is not None` is the condition that matches the intent. **Lesson:
+  `x or fallback` and `x is not None` differ exactly when the empty value is meaningful, and
+  for a declared-but-empty input it usually is.**
+
+- **A test that passes with the fix reverted proves nothing, and two of mine did.** Every
+  batch in this pass was mutation-checked: revert the fix in place, confirm the tests fail,
+  restore. Two mutation attempts failed silently for tooling reasons and would have been
+  recorded as "verified" had the failure not been read - a regex that did not match the text
+  it was meant to patch, and a shell pipeline whose `$?` reported `head`'s exit status rather
+  than the gate script's. **Lesson: a mutation check needs its own verification that the
+  mutation actually applied. "The tests still pass" is the expected outcome of a mutation that
+  never happened.**
+
+- **Python's chained comparison wrote a test assertion that could not fail.**
+  `assert x in y is False` parses as `(x in y) and (y is False)`. It passed for the wrong
+  reason until the neighbouring assertion changed. Parenthesise: `assert (x in y) is False`.
+
+### Technical Decisions
+
+- **A gate that fails on day one is a gate nobody runs.** The project's `pyproject.toml`
+  already selected E, F, W and C90 at line-length 100 - it had simply never been executed, and
+  722 findings had accumulated. Running it and fixing all 722 in one commit would have buried
+  every real change in reformatting. Instead: fix every correctness class (unused imports,
+  computed-and-discarded locals, empty f-strings, ambiguous names, stranded imports), gate
+  those, and record the two cosmetic classes as deferred *with the measured count and the
+  reason* in the config file. `E501` (574 lines) would need a whole-tree reformat whose diff
+  is larger than the code it describes; `C901` (45 functions) needs per-function refactors
+  with their own tests, and a behaviour-preserving refactor of that size is exactly where
+  regressions hide. Deferring with a number attached is honest; deleting the rule is not.
+- **mypy is gated against growth, not against zero.** `.mypy-baseline` records 34, and
+  `scripts/check_type_baseline.py` fails the build if the count rises and says so if it falls,
+  so the improvement is kept rather than quietly spent. Exit codes distinguish "too many
+  findings" (1) from "the gate could not run" (2), because a crash in the checker must not be
+  reported as a clean tree.
+- **Every judgement call on a discarded local was made individually rather than deleted
+  wholesale.** Eleven F841 findings: two were real defects (a validator that validated
+  nothing, a test that built an enforcer and asserted nothing about it), one was a no-op
+  `try/except OSError as e: raise`, one was a computed tool-name set with no field to carry
+  it, and the rest were genuinely dead. Deleting all eleven would have been faster and would
+  have lost two fixes.
+- **Problems travel out of band on an optional parameter.** Every parser gained
+  `issues: Optional[List[str]] = None` rather than a changed return type, so all existing
+  callers are unaffected and the ones that care opt in. A parser that returns an empty result
+  and a parser that failed look identical to the caller, so the difference has to travel
+  somewhere other than the return value.
+- **Parse warnings are not general warnings.** They first rode `ExecutionResult.warnings`,
+  which the Evidence Engine folds into `parse_issues` - so a permission advisory would have
+  been reported as an extraction problem. A dedicated `parse_warnings` field keeps the two
+  apart, and a test asserts a general warning does not become a parse issue.
+
+### Success Metrics
+
+- 734 tests passing with scapy, 731 plus 3 skipped without (650 at 0.5.1).
+- Ruff: 722 findings -> 0 in the gated set, and CI now runs it on every push.
+- Mypy: 194 findings -> 34, with the residue gated against growth.
+- Seven defects fixed, six from the silent-failure audit and one from the type checker. Each
+  mutation-checked; the airodump batch alone fails 13 tests when the dead loop is restored,
+  and breaking the channel-gate coupling fails 12 including an end-to-end scope case.
+- `scripts/exercise_framework.py` unchanged at 61/69 with 11 skipped across every commit in
+  the pass - the 8 failures and 11 skips are the sandbox having no wireless hardware and none
+  of the 52 declared tools installed, each recorded with its reason.
+
+### Remaining Limitations
+
+- **34 mypy findings remain**, mostly `str | None` reaching a `str` parameter where a
+  short-circuit guard has already established the value is present. Fixing them is per-site
+  judgement work; the ratchet stops the number rising.
+- **`E501` and `C901` are deferred, not fixed.** 574 over-length lines and 45 functions over
+  the complexity budget, both recorded with their counts in `pyproject.toml`.
+- **Coverage is measured but not gated.** A threshold chosen without a baseline is a number
+  that gets adjusted until it passes.
+- **The airodump screen-output fallback cannot attribute probe requests or associations.**
+  The CSV writer can and is authoritative; the fallback reports that it cannot rather than
+  guessing. Screen parsing is also verified against constructed fixtures in both known
+  layouts, not against a live capture - the sandbox has no `airodump-ng`.
+- **The channel scope gate's coupling to parameter validation is now pinned by tests but is
+  still two implementations of the same conversion.** They agree exactly today; the tests
+  exist because nothing else would notice if they stopped.
+- Carried forward from 0.5.1: redaction is name-driven, tool output is deliberately not
+  redacted (so a report leaving the machine carries any recovered passphrase with it), and two
+  `except (ValueError, TypeError): pass` handlers remain in
+  `AccessPoint.update_from_evidence`.

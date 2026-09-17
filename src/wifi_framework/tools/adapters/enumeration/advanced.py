@@ -51,7 +51,7 @@ class SmbmapAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "shares": [],
         }
@@ -103,7 +103,7 @@ class Enum4linuxNgAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "users": [],
             "shares": [],
@@ -156,7 +156,7 @@ class NbtscanAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "target": parameters.get("target") or parameters.get("network"),
             "hosts": [],
         }
@@ -235,7 +235,7 @@ class SnmpwalkAdapter(ToolAdapterBase):
     ) -> List[Evidence]:
         combined = raw_output + "\n" + error_output
 
-        parsed = {
+        parsed : Dict[str, Any] = {
             "host": parameters.get("target") or parameters.get("host"),
             "oid": parameters.get("oid", ""),
             "results": [],
