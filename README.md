@@ -495,7 +495,8 @@ config/
 ├── default.yaml
 └── capabilities/
 
-tests/                 # 380 tests
+tests/                 # 419 tests
+scripts/               # wireless verification + hwsim build for CI
 docs/
 ```
 
@@ -511,13 +512,37 @@ pytest --cov=wifi_framework
 checkout with no install step:
 
 ```bash
-python -m pytest          # 380 tests, ~4s
+python -m pytest          # 419 tests, ~5s
 ```
 
 The suite requires **no wireless hardware and no Kali tools**: capability availability is supplied
 through state rather than probed, and the end-to-end tests drive the production adapters and
 parsers through real `subprocess` calls against stub binaries placed on `PATH`. Those stubs are
 fixtures - they exercise framework code and say nothing about any real environment.
+
+### Continuous integration
+
+`.github/workflows/tests.yml` runs the unit suite on Python 3.10-3.12 and, separately, verifies
+`InterfaceManager` against **real `mac80211_hwsim` radios** on a GitHub-hosted runner. Runners boot
+an Azure kernel built without `CONFIG_MAC80211_HWSIM`, so `scripts/build_hwsim.sh` compiles the
+driver out-of-tree against the running kernel's headers and loads it.
+
+`scripts/verify_wireless_hardware.py` then drives the real module and confirms each result
+independently - reading type and channel back from `iw dev <if> info`, the MAC from
+`/sys/class/net/<if>/address`, link state from `ip link`, and rfkill blocks from `rfkill list`. A
+method that reports success without changing the radio fails the run. This is what surfaced the four
+defects fixed in 0.4.1; see `docs/ARCHITECTURE.md` for what hwsim still cannot verify (injection
+against physical drivers, chipset quirks, capture under real conditions).
+
+The same script runs by hand on a Kali box with a physical adapter:
+
+```bash
+sudo python3 scripts/verify_wireless_hardware.py            # first wireless interface
+sudo python3 scripts/verify_wireless_hardware.py --interface wlan1
+```
+
+It requires root, fails loudly with diagnostics when no radio exists rather than passing
+vacuously, and restores the interface's original MAC, type and link state afterwards.
 
 ### Code Quality
 

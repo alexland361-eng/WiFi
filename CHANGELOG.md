@@ -475,6 +475,83 @@ for the milestone plan this release completes.
   also will not fix the interface itself. `tests/test_validation.py::test_the_autonomous_loop_never_mutates_radio_hardware`
   pins the boundary so wiring it up later is a conscious decision.
 
+## [0.4.1] - 2026-09-17
+
+### Added
+- **Continuous integration** (`.github/workflows/tests.yml`): the unit suite on Python 3.10, 3.11
+  and 3.12, plus a separate job that verifies `InterfaceManager` against **real `mac80211_hwsim`
+  radios**. Runners boot an Azure kernel (`6.17.0-1022-azure`) built with `CONFIG_MODULES=y`,
+  `CONFIG_WIRELESS=y` and cfg80211/mac80211 as modules, but with `CONFIG_MAC80211_HWSIM` absent
+  entirely - so no distro package can supply it. `scripts/build_hwsim.sh` compiles the driver
+  out-of-tree against the running kernel's headers, pre-loads cfg80211 and mac80211 (whose symbols
+  are absent from `/proc/kallsyms` until loaded, which is why a bare `insmod` failed with "Unknown
+  symbol"), installs into `/lib/modules/$KREL/extra` and lets `modprobe` order the dependencies.
+  Source download retries with backoff and falls back to the API host after one run was lost to a
+  single refused connection.
+- **`scripts/verify_wireless_hardware.py`**: drives the real module and confirms every result
+  against a source the framework does not control - type and channel from `iw dev <if> info`, MAC
+  from `/sys/class/net/<if>/address`, link state from `ip link`, blocks from `rfkill list`. A method
+  reporting success without changing the radio fails. Includes a negative control (a nonexistent
+  interface must be refused), checks that a randomised MAC carries the locally-administered bit,
+  isolates each check so one exception cannot hide the rest, and restores the original MAC, type and
+  link state. Preflight fails loudly with `lsmod`/`dmesg`/`iw` diagnostics rather than passing
+  vacuously. Runs by hand on a Kali box with a physical adapter; 17/17 checks pass on hwsim.
+- **`scripts/remote_hwsim.py`**: wrapper for a remote hwsim execution API, for iterating without a
+  CI round trip. Endpoint comes from `HWSIM_ENDPOINT` rather than being hardcoded - a tunnel URL is
+  ephemeral and private, and committing one puts a stale secret in history.
+- **`tests/test_interface_manager.py`** (39 tests): pins all four fixes below using output captured
+  verbatim from the runner. Suite 380 -> 419. `tool_manager.py` coverage 58% -> 68%,
+  `interface_manager.py` 13% -> 32%.
+
+### Fixed
+Four defects in interface discovery and channel handling, found by verifying against real radios.
+None were reachable from the unit suite, which never queried the same interface twice, never ran
+where `iw` exists, and never parsed multi-radio output.
+
+- **The interface cache raised `AttributeError` on every hit.** `check_interface_deep` reads
+  `.last_checked` from the cached value, but `InterfaceCapability` never declared that field - only
+  `ToolInfo` did. Any second lookup of the same interface crashed, for existing and absent
+  interfaces alike, so the cache had never worked. This is what killed `change_mac`: it calls
+  `check_interface_deep` on an interface `get_interface_info` had already cached. Reproduced locally
+  before fixing.
+- **Interface type was detected only when `iw list` failed.** `cap.type` was assigned inside the
+  `else` branch of that check, so on every working system the type kept its `"unknown"` default.
+  Confirmed empirically: the framework reported `unknown` for an interface the kernel reported as
+  `managed`, and again for `wlan1mon` which the kernel reported as `monitor`. That also made the
+  injection probe unreachable, since its guard is `cap.type == "monitor"` - `supports_injection`
+  could never become true on real hardware. Type and channel now come from `iw dev <if> info`
+  unconditionally, parsed with an anchored `^\s*type\s+(\S+)` so AP, mesh point and IBSS are
+  captured rather than only the two literals previously handled.
+- **`get_supported_channels` ignored its `interface` argument**, parsing the whole `iw list` output
+  and merging every radio's channels, and it counted channels the driver marks `disabled`. Now scoped
+  to the owning phy and excluding disabled channels. Two separate format problems had to be fixed to
+  get there: current `iw` opens each block with `Wiphy phy0` rather than the older `phy#0`, and
+  current `iw list` does not enumerate interfaces at all, so the phy is resolved from
+  `/sys/class/net/<if>/phy80211` instead - authoritative, and correct for the virtual interfaces
+  `airmon-ng` creates. Block matching is by header equality, so `phy1` cannot select a `phy10` block.
+  When neither resolution works it falls back to the full output, so a partial answer is returned
+  rather than nothing. The `iw list` timeout also rose from 5s to 15s, which was too tight with
+  several radios.
+- **Frequencies are printed with a decimal place by current `iw`** (`* 2412.0 MHz [1]`), which 6 GHz
+  half-channel spacing requires. The parser expected `\d+ MHz`, matched `2412`, then met the decimal
+  point where whitespace was required and failed - on every line, silently, returning an empty
+  channel list. Both forms are now accepted.
+
+### Notes
+- **A lesson recorded deliberately:** the synthetic fixtures used the older integer form
+  `* 2412 MHz [1]`, so unit tests passed while the real radio returned nothing at all. Test data
+  derived from assumption rather than observation encodes the assumption. The fixtures added here are
+  verbatim runner output, and the harness diagnostic that found this was itself buggy first - it
+  truncated a joined string to 12 characters and reported `STBC Tx <= 8`, a line from the STBC
+  capability section, instead of any frequency line.
+- **What hwsim still does not verify:** packet injection against a physical driver (`aireplay-ng
+  --test`), chipset and driver quirks, and capture under real conditions. A virtual radio exercises
+  the software path up to the driver boundary. `supports_injection` is therefore implemented and
+  reachable now, but not field-proven. See `docs/ARCHITECTURE.md`.
+- The dev sandbox cannot run any of this: its kernel is built with `CONFIG_MODULES` unset, so it
+  cannot load a module at all, and `CONFIG_WIRELESS` unset besides. That is why verification moved to
+  CI rather than being a local convenience.
+
 ## [Unreleased]
 
 ### Planned
@@ -482,7 +559,9 @@ for the milestone plan this release completes.
 - More detailed parsers for horst, wavemon, kismet logs, hcxdumptool status counters
 - Web UI for assessment visualization
 - AI-based decision system as optional planner
-- Integration tests with real hardware on Kali
+- Field verification on physical adapters, including the injection probe (`aireplay-ng --test`) and
+  chipset-specific monitor-mode behaviour. hwsim verification landed in 0.4.1; it covers the software
+  path up to the driver boundary and cannot substitute for real RF.
 - Performance benchmarks for large-scale assessments
 - Decide whether an undeclared network scope should permit passive discovery of arbitrary hosts
   (see Known limitations above)

@@ -591,3 +591,146 @@ in someone's authorised engagement.
 
 **Push but don't merge**: work stays on `arena/01a0ab79-wifi` per guideline 23 (NEVER MERGE THIS
 GIT). Review before any merge decision.
+
+---
+
+## Session: 2026-09-17 - Hardware Verification via mac80211_hwsim (v0.4.1)
+
+### Context
+
+v0.4.0 was complete and pushed, but `InterfaceManager` - the module that creates monitor interfaces,
+changes MAC addresses and moves link state - sat at **13% coverage with zero call sites**. It is
+invoked only by an operator, by design, so nothing in the suite exercised it. Every previous session
+had recorded "field verification requires Kali hardware" as an outstanding limitation.
+
+The request was to test it with `mac80211_hwsim`, the kernel's software 802.11 radio simulator. That
+turned into: discovering the dev sandbox cannot load kernel modules at all, moving verification to
+GitHub-hosted runners, building the driver out-of-tree there, and finding four real defects that no
+amount of unit testing had reached.
+
+### Challenges Encountered
+
+#### 1. The sandbox cannot load modules, and said so in its kernel config
+
+`modprobe` was absent, `/lib/modules` did not exist, and `CapEff` was zero. Rather than conclude
+from those symptoms, `/proc/config.gz` gave the actual reason:
+
+```
+# CONFIG_MODULES is not set      <- monolithic kernel; nothing can ever be loaded
+# CONFIG_WIRELESS is not set     <- no cfg80211/mac80211 to attach to
+```
+
+Passwordless sudo was available and did not help: module-loading support cannot be retrofitted into
+a running kernel. Installing real `iw`/`rfkill` also failed - `deb.debian.org` is unreachable from
+here, though PyPI works, which is why the venv could be rebuilt but not the toolchain.
+
+**Lesson:** when an environment blocks something, read its configuration rather than inferring from
+missing binaries. `CONFIG_MODULES is not set` is a permanent property; a missing `modprobe` might
+have been an installable package. The distinction decided whether to keep trying locally.
+
+#### 2. The sandbox re-cloned itself mid-session and rewound local git history
+
+A turn began with `HEAD` at the branch base and 38 files showing as modified. The reflog held exactly
+two entries - a clone and a checkout - proving the repository had been re-created. All eleven local
+commits were gone from the object store.
+
+Recovery worked because the work had been pushed and because the working tree persists independently
+of git: `git ls-remote` showed the remote tip, `git merge-base --is-ancestor` confirmed resetting to
+it was a fast-forward, `git reset --mixed` moved HEAD and the index **without touching working-tree
+files**, and the remaining diff was exactly the one unpushed commit. Tests were re-run before
+re-committing.
+
+**Lesson:** `--mixed`, not `--hard`. And verify ancestry *before* moving a ref. A tarball backup of
+the working tree was taken first as insurance; it was not needed, but the check cost nothing. Push
+early - the only thing genuinely at risk was the single unpushed commit.
+
+#### 3. Getting hwsim onto a GitHub runner took four attempts, each needing evidence
+
+Runners are full VMs, but their Azure kernel is built without `CONFIG_MAC80211_HWSIM`, so no distro
+package supplies it. The sequence:
+
+1. `modprobe` -> "not found in directory". Diagnostics showed `CONFIG_MODULES=y`,
+   `CONFIG_WIRELESS=y`, cfg80211/mac80211 `=m`, hwsim absent. So the stack existed; only the driver
+   was missing, which made an out-of-tree build viable.
+2. Built against `linux-headers-$(uname -r)` from the v6.17 source. Compiled cleanly, vermagic
+   matched exactly, but `insmod` was rejected: "Unknown symbol". The symbols listed were *all*
+   cfg80211/mac80211 exports.
+3. Cause: those modules are `=m`, so their symbols are absent from `/proc/kallsyms` until loaded.
+   `insmod` does not resolve dependencies. Pre-loading cfg80211 and mac80211, installing into
+   `/lib/modules/$KREL/extra`, running `depmod`, and using `modprobe` instead - worked.
+
+Before writing the builder, the driver's includes were checked: all public headers
+(`<net/mac80211.h>`, `<linux/*>`), no internal mac80211 headers such as `ieee80211_i.h`, and its four
+`CONFIG_` references are optional `#ifdef` guards. That is what made the out-of-tree build worth
+attempting rather than a gamble.
+
+**Lesson:** an `insmod` "Unknown symbol" against a *matching* vermagic is a dependency-ordering
+problem, not a version problem. Reading which symbols were missing named the fix immediately.
+
+#### 4. CI results were unreadable, so annotations became the only channel
+
+Job logs and artifacts both live in Azure blob storage that this sandbox cannot reach - every attempt
+returned `EOF`. Step conclusions and check-run **annotations** are served by the API and do work.
+
+So the pipeline was rebuilt to emit findings as annotations: kernel config, modprobe errors, dmesg,
+missing symbols, and each failed check's claimed-versus-observed pair. One run was wasted because
+`sudo env PATH="$PATH"` preserved PATH but stripped `GITHUB_ACTIONS`, so the script concluded it was
+not in CI and stayed silent while still exiting 1.
+
+**Lesson:** when the normal observation channel is blocked, build the diagnostic into the thing being
+observed. And a wrapper that runs verification "so it can report" must actually pass through the
+variable that enables reporting - test the reporting path, not just the code path.
+
+#### 5. Four real defects, and three flaws in my own harness
+
+The first real run returned **9/16**. Defects found:
+
+- `InterfaceCapability` had no `last_checked` field, but `check_interface_deep` read it on every cache
+  hit - so the second lookup of *any* interface raised `AttributeError`. The cache had never worked.
+  This killed `change_mac`, which re-queries the interface. Reproduced locally in seconds once named.
+- `cap.type` was assigned only in the `else` branch taken when `iw list` **failed**. On every working
+  system the type stayed `"unknown"` - which also made the injection probe unreachable, since its
+  guard is `cap.type == "monitor"`. `supports_injection` could never become true on real hardware.
+- `get_supported_channels` ignored its `interface` argument, merged every radio's channels, and
+  counted channels marked `disabled`.
+- Current `iw` prints frequencies as `* 2412.0 MHz [1]`. The parser expected `\d+ MHz`, matched
+  `2412`, then met the decimal point where whitespace was required - failing on every line and
+  silently returning `[]`.
+
+Three of the failures were *my* harness, not the framework, and separating them mattered:
+
+- Channel checks ran after monitor teardown, on a **down, managed** interface where cfg80211 ties the
+  channel to the associated BSS and refuses to set it. The `iwconfig` fallback then returned success
+  while nothing changed. Channel control belongs in monitor mode.
+- The diagnostic that should have shown the frequency format joined the matching lines and truncated
+  to **12 characters**, reporting `STBC Tx <= 8` - a line from the STBC capability section. It took an
+  extra CI cycle to see what it was meant to show.
+- The synthetic fixtures used the older integer form `* 2412 MHz [1]`, so unit tests **passed** while
+  the real radio returned nothing.
+
+**Lesson, and the most important one here:** test data derived from assumption encodes the assumption.
+The fixtures now in `test_interface_manager.py` are verbatim runner output. A harness must also be
+ordered to test each operation in the state where that operation is legal, or it measures its own
+setup rather than the code.
+
+### What hwsim proves, and what it does not
+
+A virtual radio exercises the software path up to the driver boundary. It confirmed monitor-mode
+creation and teardown, MAC changes (explicit and randomised), channel setting, link state, rfkill,
+type detection and the negative control - **17/17**. It cannot confirm packet injection against a
+physical driver, chipset quirks, or capture under real conditions. `supports_injection` is now
+*reachable*, which it was not before, but it is not field-proven. That distinction is recorded in
+`docs/ARCHITECTURE.md` rather than being left implicit in a green CI badge.
+
+### Success Metrics
+
+- [x] 17/17 verification checks pass against real `mac80211_hwsim` radios in CI
+- [x] Unit suite green on Python 3.10, 3.11 and 3.12
+- [x] Four real defects found and fixed, each pinned by a regression test
+- [x] Suite 380 -> 419; `tool_manager.py` 58% -> 68%, `interface_manager.py` 13% -> 32%
+- [x] hwsim built out-of-tree and loaded on a runner whose kernel ships without it
+- [x] Verification re-reads every claim from `iw`, sysfs, `ip` and `rfkill` - never from the
+      framework's own return values
+- [x] The verification script also runs by hand on a Kali box with a physical adapter, fails loudly
+      when no radio exists, and restores original interface state
+- [x] All work on `arena/01a0ab79-wifi`; **not merged**

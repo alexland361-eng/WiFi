@@ -561,13 +561,14 @@ class AssessmentEngine:
 
 ## Testing
 
-380 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+419 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
 `pyproject.toml`, so no install step is needed):
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `test_validation.py` | 116 | Input validators, the single-sourced forbidden-character rule, the interface-existence gate, no-shell and no-autonomous-hardware-mutation AST sweeps, and that a malformed scope BSSID authorises nothing |
 | `test_contracts.py` | 49 | Envelope, both wire forms, version negotiation, digests, every semantic rule |
+| `test_interface_manager.py` | 39 | Interface cache TTL, type/channel detection, phy scoping and `iw` output formats, pinned from real hwsim runs |
 | `test_world_state.py` | 34 | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
 | `test_policy.py` | 30 | Scope / capability / parameter stages, fail-closed invasiveness, refusals |
 | `test_verification_engine.py` | 29 | Noisy-OR aggregation, all six verification states, freshness, contradiction |
@@ -582,9 +583,33 @@ The integration suite puts stub binaries on `PATH` and drives the production ada
 gateway and policy through real `subprocess` calls. Stubs record their own invocations, which lets
 the tests prove a negative: that a scope-refused action never reached the tool.
 
-**What cannot be verified without hardware:** monitor mode, packet injection, and any behaviour
-depending on the presence of Kali tools (`airodump-ng`, `wash`, `reaver`, `hcxdumptool`, `nmap`).
-Those paths are implemented, not field-verified.
+### Hardware verification
+
+`test_interface_manager.py` pins parsing and cache behaviour using output captured from a real
+radio, so those regressions are caught anywhere. Beyond that, CI verifies `InterfaceManager`
+against actual `mac80211_hwsim` radios - see `.github/workflows/tests.yml` and
+`scripts/verify_wireless_hardware.py`. Every claim the module makes is re-read from a source it
+does not control (`iw dev <if> info`, `/sys/class/net/<if>/address`, `ip link`, `rfkill list`), so
+a method reporting success without changing the radio is a failure rather than a pass.
+
+That run found four defects the unit suite could not reach, all fixed in 0.4.1: the interface
+cache raised `AttributeError` on every hit; interface type was detected only when `iw list`
+*failed*, which also made the injection probe unreachable; `get_supported_channels` ignored its
+interface argument and counted disabled channels; and frequencies are printed with a decimal place
+by current `iw`, which the parser did not match.
+
+**What hwsim still does not verify.** A virtual radio exercises the software path - mode changes,
+MAC changes, channel setting, output parsing - but not RF behaviour, so these remain unverified:
+
+- **Packet injection.** `aireplay-ng --test` against a physical driver. hwsim accepts frames that
+  real chipsets reject, so `supports_injection` is not field-proven.
+- **Chipset and driver quirks.** Firmware loading, USB power management, and the drivers that need
+  `airmon-ng check kill` or refuse monitor mode while associated.
+- **Capture under real conditions.** Whether `airodump-ng`, `wash`, `reaver` and `hcxdumptool`
+  behave against live traffic, and handshake capture from a real AP.
+
+Those paths are implemented and now verified up to the driver boundary; beyond it they are not
+field-verified. Physical-adapter verification remains outstanding.
 
 ## Future
 
@@ -593,4 +618,4 @@ Those paths are implemented, not field-verified.
 - Web UI
 - AI planner
 - Async execution
-- Integration tests with real hardware
+- Field verification on physical adapters, including the injection probe
