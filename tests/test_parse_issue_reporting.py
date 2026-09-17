@@ -204,7 +204,7 @@ def test_execute_resets_parse_warnings_between_runs():
 # --------------------------------------------------------------- result -> contract
 
 
-def test_the_gateway_carries_parse_warnings_onto_the_contract():
+def test_parse_warnings_stay_off_the_general_warning_list():
     from wifi_framework.core.execution.gateway import ExecutionGateway
 
     expected = ["nmap XML output could not be parsed (unclosed token)"]
@@ -218,8 +218,13 @@ def test_the_gateway_carries_parse_warnings_onto_the_contract():
     )
 
     _status, failure, warnings = ExecutionGateway._classify(legacy, [])
-    assert warnings == expected
     assert failure is None, "a parse problem is not an execution failure - the tool ran"
+    assert warnings == [], (
+        "parse problems must not ride on general warnings: the Evidence Engine folds "
+        "parse_warnings into parse_issues, and mixing them would make every advisory "
+        "claim to be an extraction problem"
+    )
+    assert legacy.parse_warnings == expected
 
 
 def test_a_legacy_result_without_parse_warnings_is_unaffected():
@@ -238,7 +243,7 @@ def test_a_legacy_result_without_parse_warnings_is_unaffected():
 # ------------------------------------------------------------- contract -> evidence
 
 
-def _execution(warnings: list) -> ExecutionResult:
+def _execution(parse_warnings: list, warnings: list | None = None) -> ExecutionResult:
     return ExecutionResult(
         assessment_id=ASSESSMENT,
         action_id="action-parse",
@@ -251,7 +256,8 @@ def _execution(warnings: list) -> ExecutionResult:
         tool=ToolRef(name="nmap", version="7.94"),
         interface=InterfaceRef(name="wlan0"),
         command=["nmap", "10.0.0.1"],
-        warnings=list(warnings),
+        parse_warnings=list(parse_warnings),
+        warnings=list(warnings or []),
         correlation_id=ASSESSMENT,
     )
 
@@ -306,10 +312,13 @@ def test_parse_warnings_survive_the_whole_chain():
         parse_warnings=list(adapter.parse_warnings),
     )
 
-    _status, _failure, warnings = ExecutionGateway._classify(legacy, [])
+    _status, _failure, general_warnings = ExecutionGateway._classify(legacy, [])
+    assert general_warnings == []
 
+    # What the gateway's `_invoke` does: the adapter's parse warnings go on the
+    # contract's own field, not onto the general warning list.
     engine = EvidenceEngine(AssessmentScope(authorized_networks=["10.0.0.0/24"]))
-    result = engine.process(_execution(warnings), evidences)
+    result = engine.process(_execution(legacy.parse_warnings), evidences)
 
     assert result.evidence_set.observations == []
     assert any("could not be parsed" in issue for issue in result.evidence_set.parse_issues), (

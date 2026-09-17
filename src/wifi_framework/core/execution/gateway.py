@@ -320,10 +320,11 @@ class ExecutionGateway:
         )
         completed_at = utc_now()
 
-        artifacts, stdout_artifact, stderr_artifact = self._store_artifacts(
+        artifacts, stdout_artifact, stderr_artifact, storage_warnings = self._store_artifacts(
             legacy, prepared, execution_id=legacy.execution_id
         )
         status, failure, warnings = self._classify(legacy, artifacts)
+        warnings.extend(storage_warnings)
         tool_ref = self._tool_ref(metadata, implementation)
         interface_ref = self._interface_ref(prepared.interface, state)
         duration_ms = int(round((legacy.duration or 0.0) * 1000))
@@ -353,6 +354,9 @@ class ExecutionGateway:
             interface=interface_ref,
             failure=failure,
             command=command,
+            # Extraction problems travel on their own field so the Evidence Engine can
+            # fold them into parse_issues without treating every warning as one.
+            parse_warnings=list(getattr(legacy, "parse_warnings", None) or []),
             parameters=dict(prepared.parameters),
             warnings=warnings,
             scope_authorised=bool(validation.approved) if validation is not None else False,
@@ -434,10 +438,20 @@ class ExecutionGateway:
 
     def _store_artifacts(
         self, legacy: Any, prepared: PreparedAction, *, execution_id: str
-    ) -> Tuple[List[ArtifactRef], Optional[str], Optional[str]]:
+    ) -> Tuple[List[ArtifactRef], Optional[str], Optional[str], List[str]]:
+        """Store the run's streams and any files the tool wrote.
+
+        The fourth element carries warnings about the storage itself - currently,
+        artifacts whose permissions could not be restricted to the owner. They are
+        advisories rather than failures: the bytes were written and hashed correctly,
+        but a captured handshake left readable by other local users is worth putting in
+        the audit trail rather than only in a statistics dict.
+        """
         artifacts: List[ArtifactRef] = []
+        storage_warnings: List[str] = []
         stdout_id = stderr_id = None
         if self.artifact_store is not None:
+            before = len(self.artifact_store.permission_failures)
             stdout = self.artifact_store.store_text(
                 KIND_STDOUT, legacy.raw_output or "", description="tool stdout", execution_id=execution_id
             )
@@ -451,7 +465,12 @@ class ExecutionGateway:
                 artifacts.append(stderr)
                 stderr_id = stderr.id
             artifacts.extend(self._register_output_files(prepared.parameters, execution_id))
-        return artifacts, stdout_id, stderr_id
+            for path in self.artifact_store.permission_failures[before:]:
+                storage_warnings.append(
+                    f"artifact {path} could not be restricted to owner-only access and may be "
+                    "readable by other local users"
+                )
+        return artifacts, stdout_id, stderr_id, storage_warnings
 
     def _register_output_files(self, parameters: Dict[str, Any], execution_id: str) -> List[ArtifactRef]:
         """
@@ -485,9 +504,6 @@ class ExecutionGateway:
     @staticmethod
     def _classify(legacy: Any, artifacts: List[ArtifactRef]) -> Tuple[str, Optional[ExecutionFailure], List[str]]:
         warnings: List[str] = []
-        # Extraction problems the parser could not express as evidence. The run is not
-        # a failure, so this is the only channel that carries them.
-        warnings.extend(getattr(legacy, "parse_warnings", None) or [])
         reason = legacy.failure_reason
         executed = bool(legacy.raw_command)
 

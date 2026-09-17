@@ -180,6 +180,13 @@ class ExecutionResult(BaseContract):
     interface: Optional[InterfaceRef] = None
     failure: Optional[ExecutionFailure] = None
 
+    #: Extraction problems the parser could not express as evidence: a document that
+    #: did not parse, an output format it did not recognise. The run is not a failure -
+    #: the tool executed and exited cleanly - so ``status`` and ``failure`` say nothing
+    #: about it. Kept separate from ``warnings`` because the Evidence Engine folds these
+    #: into ``EvidenceSet.parse_issues``, and mixing general advisories in would make
+    #: every warning claim to be an extraction problem.
+    parse_warnings: List[str] = field(default_factory=list)
     #: Concrete invocation, as an argument list (never a shell string).
     command: List[str] = field(default_factory=list)
     parameters: Dict[str, Any] = field(default_factory=dict)

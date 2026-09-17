@@ -66,6 +66,8 @@ class ArtifactStoreStats:
     total_bytes: int
     truncated_count: int
     missing_count: int
+    #: Paths whose owner-only restriction could not be applied.
+    permission_failure_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -73,6 +75,7 @@ class ArtifactStoreStats:
             "artifact_count": self.artifact_count,
             "total_bytes": self.total_bytes,
             "truncated_count": self.truncated_count,
+            "permission_failure_count": self.permission_failure_count,
             "missing_count": self.missing_count,
         }
 
@@ -99,6 +102,10 @@ class ArtifactStore:
         self._artifacts: Dict[str, ArtifactRef] = {}
         self._manifest_path = os.path.join(self.base_dir, "artifacts.jsonl")
         self._created_dirs = False
+        #: Files whose permissions could not be restricted to the owner. Artifacts
+        #: hold captured traffic, so a file left group- or other-readable is worth
+        #: reporting even though the artifact itself was written successfully.
+        self.permission_failures: List[str] = []
 
     # ------------------------------------------------------------------ layout
 
@@ -154,7 +161,8 @@ class ArtifactStore:
         handle_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, OWNER_ONLY_FILE_MODE)
         with os.fdopen(handle_fd, "wb") as handle:
             handle.write(stored)
-        tighten_file_mode(path)
+        if not tighten_file_mode(path):
+            self.permission_failures.append(path)
 
         artifact = ArtifactRef(
             id=artifact_id,
@@ -203,6 +211,14 @@ class ArtifactStore:
             )
 
         self._ensure_dir()
+        # The tool wrote this file with its own umask, so a capture is typically 0644 -
+        # world-readable, and a pcap holds whole conversations rather than a summary of
+        # them. Restricting files the framework writes but not the ones it adopts would
+        # leave the most sensitive artifacts of all unprotected. Best effort: the file
+        # may belong to another uid if the tool ran elevated, in which case the failure
+        # is recorded rather than raised, because the artifact is still worth keeping.
+        if not tighten_file_mode(path):
+            self.permission_failures.append(os.path.abspath(path))
         artifact_id = f"artifact-{uuid.uuid4().hex[:12]}"
         digest = hashlib.sha256()
         with open(path, "rb") as handle:
@@ -266,6 +282,7 @@ class ArtifactStore:
             total_bytes=sum(item.bytes for item in self._artifacts.values()),
             truncated_count=sum(1 for item in self._artifacts.values() if item.truncated),
             missing_count=missing,
+            permission_failure_count=len(self.permission_failures),
         )
 
     # --------------------------------------------------------------- lifecycle

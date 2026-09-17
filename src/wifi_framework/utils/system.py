@@ -513,27 +513,81 @@ def ensure_private_dir(path: str, mode: int = OWNER_ONLY_DIR_MODE) -> None:
                 f"current uid {os.getuid()}; a predictable path under /tmp must not "
                 "be reused from another account"
             )
-        if info.st_mode & 0o077:
-            os.chmod(path, mode)
+        require_private(path, mode)
         return
 
     existed_before = os.path.exists(path)
     os.makedirs(path, mode=mode, exist_ok=True)
     if not existed_before:
         # makedirs applies `mode` inconsistently across intermediate directories and
-        # is masked by the umask, so state the leaf mode explicitly.
+        # is masked by the umask, so state the leaf mode explicitly. A failure here is
+        # not fatal on its own - the mode may already be right - so the outcome is
+        # verified below rather than the syscall trusted.
         try:
             os.chmod(path, mode)
         except OSError:
             pass
+    require_private(path, mode)
 
 
-def tighten_file_mode(path: str, mode: int = OWNER_ONLY_FILE_MODE) -> None:
-    """Restrict a file this process just wrote. Best effort; never raises."""
+def require_private(path: str, mode: int = OWNER_ONLY_DIR_MODE) -> None:
+    """Raise unless ``path`` is actually inaccessible to group and other.
+
+    Verifies the resulting mode rather than trusting that ``chmod`` succeeded. A
+    filesystem that ignores ``chmod``, or an immutable flag, would otherwise leave an
+    audit directory or an artifact store readable by every local user while each
+    caller believed it had been protected - and the earlier behaviour was worse than
+    inconsistent: tightening an existing directory raised a bare ``PermissionError``
+    with no context, while the same failure on a newly created one was swallowed.
+
+    Raises:
+        RuntimeError: the path is still group- or other-accessible.
+    """
+    try:
+        current = os.stat(path).st_mode
+    except OSError as exc:
+        raise RuntimeError(f"cannot verify the permissions of {path!r}: {exc}") from exc
+
+    if not current & 0o077:
+        return
+
+    try:
+        os.chmod(path, mode)
+        current = os.stat(path).st_mode
+    except OSError as exc:
+        raise RuntimeError(
+            f"{path!r} is group/other accessible (mode {oct(current & 0o777)}) and could "
+            f"not be tightened: {exc}"
+        ) from exc
+
+    if current & 0o077:
+        raise RuntimeError(
+            f"{path!r} is still group/other accessible (mode {oct(current & 0o777)}) after "
+            "chmod; refusing to hold captured traffic or an audit trail that other local "
+            "users can read"
+        )
+
+
+def tighten_file_mode(path: str, mode: int = OWNER_ONLY_FILE_MODE) -> bool:
+    """Restrict a file this process just wrote, and report whether it worked.
+
+    Returns ``True`` when the file no longer grants group or other access. Never
+    raises: callers tighten inside a write loop, and one unchmoddable file must not
+    abort an assessment.
+
+    The return value is the point. Swallowing the ``OSError`` here meant a file left
+    at 0644 - a captured handshake, an audit trail - with nothing anywhere to say so,
+    which silently undoes the reason the file was created with an owner-only mode in
+    the first place. Callers must check the result and record a ``False``.
+    """
     try:
         os.chmod(path, mode)
     except OSError:
         pass
+    try:
+        return not (os.stat(path).st_mode & 0o077)
+    except OSError:
+        return False
 
 
 def parse_version(version_str: str) -> Optional[Tuple[int, ...]]:

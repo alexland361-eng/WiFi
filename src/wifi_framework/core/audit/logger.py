@@ -76,7 +76,14 @@ class AuditLogger:
             log_file = os.path.join(self.log_dir, f"{self.assessment_id}.jsonl")
             with open(log_file, "a") as f:
                 f.write(json.dumps(event) + "\n")
-            tighten_file_mode(log_file)
+            if not tighten_file_mode(log_file):
+                # The event is written but the file may be readable by other local
+                # users. Recorded rather than raised: abandoning the trail mid-write
+                # would lose more than the permission problem costs, but the problem
+                # must not be invisible either.
+                self.write_failures.append(
+                    f"{log_file} could not be restricted to owner-only access"
+                )
         except OSError as exc:
             # Not silent: an audit trail that stops being written must be visible,
             # otherwise the assessment looks auditable and is not.
