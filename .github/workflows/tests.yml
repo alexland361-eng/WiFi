@@ -98,13 +98,13 @@ jobs:
           else
             echo "installing module package for $KREL"
             sudo apt-get install -y "linux-modules-extra-$KREL" 2>&1 | tail -5 || true
-            sudo apt-get install -y linux-modules-extra-generic 2>&1 | tail -5 || true
             sudo depmod -a "$KREL" || true
             echo "searching for the module file:"
             find /lib/modules -name 'mac80211_hwsim*' 2>/dev/null | head -5 || echo "  (none found)"
             attempt mac80211_hwsim radios=2 || {
-              echo "::error title=hwsim-unavailable::mac80211_hwsim could not be loaded on kernel $KREL: ${LAST_ERR}"
-              exit 1
+              echo "not shipped by the distro for this kernel; building out-of-tree"
+              echo "::notice title=hwsim::distro package lacks hwsim on $KREL, building from kernel source"
+              bash scripts/build_hwsim.sh "$KREL"
             }
           fi
 
