@@ -72,6 +72,10 @@ class Evidence:
     tags: List[str] = field(default_factory=list)
     # For auditability
     execution_id: Optional[str] = None
+    # Correlation chain: assessment_id -> action_id -> execution_id -> evidence_id.
+    # Added in 0.4.0 so every observation can be traced to the decision that caused it.
+    action_id: Optional[str] = None
+    correlation_id: Optional[str] = None
 
     def __post_init__(self):
         # Validate confidence bounds
@@ -100,6 +104,8 @@ class Evidence:
             "interface": self.interface,
             "tags": self.tags,
             "execution_id": self.execution_id,
+            "action_id": self.action_id,
+            "correlation_id": self.correlation_id,
             # raw_output intentionally excluded from default dict for size, but available
         }
 

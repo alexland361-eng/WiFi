@@ -12,6 +12,23 @@ from ..models.capability import ToolCapabilityMetadata
 from ..execution.registry import CapabilityRegistry
 
 
+#: Which capability outputs are useful for which kind of information gap.
+#: Module-level so the decision layer can derive ``expected_outputs`` from the same table
+#: instead of maintaining a second copy that could drift.
+UNCERTAINTY_OUTPUT_MAP: Dict[str, List[str]] = {
+    "interface_discovery": ["interfaces", "interface_capabilities"],
+    "wireless_observation": ["access_points", "clients", "signal_observations"],
+    "ap_identification": ["access_points", "signal_observations"],
+    "wps_state": ["wps_observations", "access_points"],
+    "client_discovery": ["clients", "access_points"],
+    "network_hosts": ["network_hosts"],
+    "handshake_capture": ["capture", "handshake"],
+    "verification": ["access_points", "network_hosts", "signal_observations"],
+    "hidden_ssid": ["access_points"],
+    "capability_discovery": ["interface_capabilities", "radio_block_status"],
+}
+
+
 class ActionSelector:
     """
     Selects next action based on uncertainties, capabilities, scope, and experience.
@@ -55,24 +72,23 @@ class ActionSelector:
         outputs = capability.outputs
 
         # Mapping of uncertainty types to useful outputs
-        mapping = {
-            "interface_discovery": ["interfaces", "interface_capabilities"],
-            "wireless_observation": ["access_points", "clients", "signal_observations"],
-            "ap_identification": ["access_points", "signal_observations"],
-            "wps_state": ["wps_observations", "access_points"],
-            "client_discovery": ["clients", "access_points"],
-            "network_hosts": ["network_hosts"],
-            "handshake_capture": ["capture", "handshake"],
-            "verification": ["access_points", "network_hosts", "signal_observations"],
-            "hidden_ssid": ["access_points"],
-            "capability_discovery": ["interface_capabilities", "radio_block_status"],
-        }
-
-        useful_outputs = mapping.get(uncertainty_type, [])
+        useful_outputs = UNCERTAINTY_OUTPUT_MAP.get(uncertainty_type, [])
         for out in outputs:
             if out in useful_outputs:
                 score += 5.0
                 reasons.append(f"Produces useful output: {out}")
+
+        # Relevance gate. A capability that produces none of the outputs this gap needs, and is
+        # not named as able to resolve it, must not be selected at all. Running it would spend
+        # time and add noise without reducing uncertainty, which is exactly the "presence of a
+        # tool is not a requirement to execute it" rule the framework is built on. Returning a
+        # negative score makes the capability unselectable rather than merely unattractive.
+        if useful_outputs and capability.name not in required_caps:
+            if not any(out in useful_outputs for out in outputs):
+                return -1.0, (
+                    f"cannot reduce '{uncertainty_type}' uncertainty: produces "
+                    f"{list(outputs) or 'no'} outputs, none of {useful_outputs} are needed"
+                )
 
         # Prefer non-invasive for early phases
         if not capability.operational_properties.invasive:

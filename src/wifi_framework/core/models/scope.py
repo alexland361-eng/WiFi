@@ -142,9 +142,17 @@ class AssessmentScope:
         if not self.authorized_ssids and not self.authorized_bssids:
             return True
 
-        # If either matches, authorized
-        ssid_ok = self.is_ssid_authorized(ssid) if ssid else False
-        bssid_ok = self.is_bssid_authorized(bssid) if bssid else False
+        # If either matches, authorized.
+        #
+        # An identifier may only *grant* authorisation when the operator actually used that
+        # identifier to define scope. An empty list means "this identifier did not define the
+        # scope", not "anything goes": without this rule, an access point whose BSSID is
+        # explicitly absent from an authorised-BSSID list would be waved through by a
+        # vacuously true SSID check, and an invasive action against a neighbour's AP would be
+        # permitted. ``is_ssid_authorized``/``is_bssid_authorized`` deliberately stay permissive
+        # for callers that ask about a single identifier in isolation.
+        ssid_ok = bool(ssid) and bool(self.authorized_ssids) and self.is_ssid_authorized(ssid)
+        bssid_ok = bool(bssid) and bool(self.authorized_bssids) and self.is_bssid_authorized(bssid)
 
         # If both provided, either matching is enough
         # If only one provided, that one must match

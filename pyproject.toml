@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wifi-framework"
-version = "0.1.0"
+version = "0.4.0"
 description = "Real Wi-Fi penetration-testing and security-assessment framework with adaptive, evidence-driven orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,6 +55,8 @@ where = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+# Allow ``pytest`` to run from a clean checkout without a prior ``pip install -e .``.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

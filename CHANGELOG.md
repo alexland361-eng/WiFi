@@ -191,13 +191,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TOOL_HANDLING.md with deep research, operational integrity, resource management, auditability, security, verification
 - RESEARCH.md already covers all tools with real usage, flags, output, operational characteristics, sources, adaptive usage
 
+## [0.4.0] - 2026-09-16
+
+### Added - Explicit Data Contract Layer
+
+Subsystems no longer call each other's internals: they exchange versioned, validated, immutable
+messages. See `docs/DATA_CONTRACTS.md` for the full reference and `docs/CONTRACT_LAYER_PLAN.md`
+for the milestone plan this release completes.
+
+- **`src/wifi_framework/contracts/` package** - ten contracts, all at version `1.0`, importing
+  nothing from `core/` so engines stay independently replaceable:
+  - `base.py`: `BaseContract` with the common envelope (`schema`, `version`, `message_id`,
+    `assessment_id`, `timestamp`, `source_engine`, `correlation_id`, `extensions`), two wire forms
+    (`to_message()` enveloped / `to_dict()` flat), content digests, and typed-field normalisation
+    on both construction and parsing
+  - `registry.py`: `ContractRegistry` performing Semantic-Versioning major-version negotiation;
+    an unsupported major version raises `UnsupportedContractVersion` rather than being guessed at
+  - `world_state.py`: `world-state` with interface/AP/client/network projections, observation
+    refs, capability states with availability reasons, uncertainty refs, execution summary and
+    planner hints
+  - `ai.py`: `planning-context` and `decision-proposal`; a proposal **cannot carry a command** -
+    parsing one that does raises, so an AI layer can never invoke a shell
+  - `action.py`: `action-request` (objective, target, reason, prerequisites, expected outputs,
+    origin, verification requirement) and `action-validation-result` (approved/rejected/deferred
+    with per-stage checks and a structured rejection reason)
+  - `execution.py`: `execution-result` with `ExecutionStatus` split into `TERMINAL_EXECUTED`
+    (success, partial, failed, timeout, cancelled) and `TERMINAL_NOT_EXECUTED` (unsupported,
+    rejected), plus `FailureCategory` and its `RETRIABLE` subset
+  - `evidence.py`: `evidence-set` with `Observation` carrying full `Provenance`
+    (execution → action → assessment → correlation → tool → artifacts)
+  - `verification.py`: `verification-request`/`verification-result` with `Claim`, `ClaimType`,
+    `VerificationStatus` (verified, supported, unresolved, contradicted, refuted, stale),
+    `VerificationMethod` and `EvidenceRequirement`
+  - `experience.py`: `experience-record` with `ActionOutcome` and `ExecutionOutcomeCost`
+- **World Model contract boundary** (`core/world/`): `WorldStatePublisher` projects the
+  authoritative state into `world-state` (stable uncertainty ids derived from type and subjects
+  only, staleness flags, scope flags, hypotheses/findings split, capability availability with
+  preserved reasons); `WorldModelApplier` is the only writer from contracts back into the model
+  and refuses evidence the contract did not declare
+- **Policy layer** (`core/policy/validator.py`): `ActionPolicy` validates an `action-request`
+  through structural → scope → capability → parameters and returns an `action-validation-result`,
+  distinguishing `rejected` (must not run) from `deferred` (cannot run here right now), with
+  `ParameterRule` families for MAC, SSID, channel, IP, CIDR, interface, path and domain values
+- **Execution Gateway** (`core/execution/gateway.py`): prepares a request into a concrete
+  invocation, runs the real tool, and reports an `execution-result`; `classify_failure` maps
+  adapter reasons onto structured categories
+- **Artifact Store** (`core/execution/artifacts.py`): tool output is referenced, not inlined -
+  `ArtifactRef` records path, size and SHA-256, enforces a 32 MiB cap and discloses truncation
+- **Evidence Engine** (`core/evidence/engine.py`): turns executions into attributed, scoped
+  observations, declares parse problems instead of hiding them, and emits deduplicated
+  `verification-request`s per (subject, claim) so ten observations of one AP open one cycle
+- **Verification Engine** (`core/verification/engine.py`): judges claims with noisy-OR
+  aggregation over de-duplicated independent sources, freshness checks and contradiction
+  detection; returns `action-request`s when more evidence is needed and never executes a tool
+- **Decision Engine** (`core/decision/`): `WorldStateView` and `ContractRegistryView` make
+  `world-state` authoritative for capability availability during planning
+- **Experience Engine** (`core/experience/engine.py`): builds `experience-record`s where
+  `gain = saturation(new_observations) × status_factor × verification_factor`
+- **Correlation chains**: `AuditLogger.correlation_chains()` reconstructs
+  `assessment_id → action_id → execution_id → evidence_ids → verification_ids → finding_ids` per
+  execution; `contract_catalogue()` lists producers and supported versions. Both are included in
+  every generated report, and each contract is audited under a `contract:<schema>` event
+- **Model fields** (additive): `Evidence.action_id`/`correlation_id`;
+  `ExecutionRecord.action_id`/`correlation_id`/`status`/`artifact_ids`
+
+### Changed
+
+- `AssessmentEngine` now runs the whole loop through contracts: publish `world-state` → service
+  pending verification actions → plan → prepare → validate → execute → evidence → verify →
+  experience → re-evaluate. `run_single_action` accepts either an `action-request` or a legacy
+  dict; `legacy_action_to_request` bridges older callers
+- Environment bootstrap (`iw dev`, `iwconfig`, `rfkill`) is expressed as an `action-request` with
+  objective `discover_interfaces` and runs through the same pipeline, so **every** execution in
+  the history carries an `action_id` and is traceable. A tool that is not installed now yields
+  `unsupported` rather than a failed-looking execution
+- Policy check order matches specification section 11: scope is judged **before** capability, so
+  an out-of-scope request reports the scope refusal even when the tool is also missing
+- Refusals now suppress capabilities instead of being re-requested: permanent for scope denial,
+  unknown capability and unsafe parameters; a 3-iteration cooldown for transient refusals
+  (`BLOCK_COOLDOWN_ITERATIONS`). Blocked capabilities are projected out of the `world-state` view
+  the Decision Engine plans from, while the published record of the environment is unchanged
+- `ActionSelector` gained a relevance gate: a capability that produces none of the outputs an
+  uncertainty needs is unselectable (score `-1.0`) rather than merely unattractive. This
+  implements "the presence of a tool is not a requirement to execute it" - previously `curl`
+  could be selected to resolve "no access points observed"
+- `ExecutionGateway.prepare()` attributes a refusal to the most fundamental blocker: a missing
+  binary is reported as `tool_not_found` instead of `interface_unavailable`, and is blocked
+  permanently rather than looking retriable
+- `pyproject.toml`: `pythonpath = ["src"]` for pytest, so the suite runs from a clean checkout
+  without an install step; package version aligned with the changelog (0.1.0 → 0.4.0)
+
+### Fixed
+
+- **`WorldStateView` crashed on any observation** (`core/decision/state_view.py` read
+  `observation.tags`, a field `ObservationRef` does not have). Every assessment that had observed
+  anything failed at planning; tags are now rebuilt from the contract's `in_scope`/`stale`
+  projections
+- `WorldStatePublisher` inferred `in_scope=True` from the presence of *any* tag, asserting a scope
+  authorisation nobody had granted. Only an explicit `in_scope`/`out_of_scope` tag now states it
+- `AssessmentScope.is_wireless_asset_authorized` could wave an unauthorised BSSID through because
+  an empty SSID allowlist made the SSID check vacuously true. An identifier now grants
+  authorisation only when the operator actually used it to define scope; the documented
+  "either declared identifier matches" behaviour is preserved
+- Evidence sets from a timed-out execution are now marked `incomplete`, matching the partial
+  observations they carry
+- `ActionPolicy` no longer double-reports a missing interface: interface requirements are owned by
+  the capability stage (which also knows whether it exists, is up and supports monitor mode), so
+  an environmental gap yields a deferral the engine can act on instead of a hard rejection
+- Contracts built in-process now coerce nested fields to their declared types exactly as parsed
+  ones do, so consumers never have to defend against both shapes
+
+### Security
+
+- Fail-closed invasiveness: a capability that cannot be resolved is treated as invasive, because
+  an unknown capability cannot be shown to be passive
+- Unsafe parameter values (argument injection, control characters, shell metacharacters, path
+  traversal, bytes) are rejected and never retried; a merely missing target stays retriable
+- Scope-refused and parameter-refused actions never reach the tool - proven by stub binaries that
+  record their own invocations
+- Still no `shell=True` anywhere; commands remain argument lists and `pyyaml` remains the only
+  third-party runtime dependency
+
+### Documentation
+
+- `docs/DATA_CONTRACTS.md`: envelope, catalogue, validation levels, execution states, policy
+  order, correlation chains, artifacts, subsystem boundaries and invariants, module map, how to
+  add a contract, and an explicit verification-honesty statement
+- `docs/ARCHITECTURE.md`: new Contract Layer section with the message-flow diagram, contract
+  table and invariants; Testing section replaced with the actual suites and their coverage
+- `docs/CONTRACT_LAYER_PLAN.md`: verification honesty statement completed
+
+### Testing
+
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 224 tests. The one
+  pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
+  the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
+- New suites: `test_contracts.py` (49), `test_policy.py` (30), `test_evidence_engine.py` (28),
+  `test_verification_engine.py` (29), `test_world_state.py` (34), `test_contract_pipeline.py` (23)
+- `test_contract_pipeline.py` drives the **production** adapters, parsers, gateway and policy
+  through real `subprocess` calls against stub binaries on `PATH`, covering success, non-zero
+  exit, permission failure, timeout, malformed output, missing tool, scope refusal, unsafe
+  parameters and the complete loop
+- Full suite runs in ~4s and requires no wireless hardware and no Kali tools
+
+### Known limitations
+
+- Behaviour depending on real wireless hardware, monitor mode, packet injection or the presence of
+  Kali tools (`airodump-ng`, `wash`, `reaver`, `hcxdumptool`, `nmap`, …) is implemented but
+  **not field-verified**; this sandbox has no wireless tooling
+- A timed-out run reports `timeout` rather than `partial` for adapters that decline to parse
+  output from a non-zero exit (e.g. `iw`). Capture tools writing to files
+  (`airodump-ng --write`, `hcxdumptool`) are how partial output reaches the model
+- With no network scope declared, `is_ip_authorized` permits passive discovery of any host. This
+  is pre-0.4.0 `AssessmentScope` semantics, deliberately left unchanged here; tightening it is a
+  behavioural decision for the maintainer
+
 ## [Unreleased]
 
 ### Planned
 - Additional adapters: airdriver-ng, ivstools (can be added similarly), Wireshark GUI (not suitable for automation but could add adapter for --help)
 - More detailed parsers for horst, wavemon, kismet logs, hcxdumptool status counters
-- Verification workflows: re-scan with different tool, signal correlation
 - Web UI for assessment visualization
 - AI-based decision system as optional planner
 - Integration tests with real hardware on Kali
 - Performance benchmarks for large-scale assessments
+- Decide whether an undeclared network scope should permit passive discovery of arbitrary hosts
+  (see Known limitations above)

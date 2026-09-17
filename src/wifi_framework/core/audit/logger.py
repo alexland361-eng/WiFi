@@ -106,6 +106,50 @@ class AuditLogger:
             {"from": from_phase, "to": to_phase, "reason": reason},
         )
 
+    def log_contract(self, contract, *, full_payload: bool = None, summary: Dict[str, Any] = None):
+        """
+        Log an inter-engine contract message.
+
+        Every message is recorded with its envelope (schema, version, message_id,
+        correlation_id) and a payload digest, so the sequence of messages that produced a
+        finding can be reconstructed even when the payload itself is too large to inline.
+
+        Full payloads are recorded for the small, decision-bearing contracts. ``world-state``
+        and ``evidence-set`` are recorded as a summary plus digest by default: their content is
+        already in the audit trail as individual evidence and execution events, and inlining
+        hundreds of observations per iteration would bury the trail rather than improve it.
+        """
+        envelope = contract.envelope().to_dict()
+        digest = contract.digest()
+        if full_payload is None:
+            full_payload = contract.SCHEMA not in self.COMPACT_PAYLOAD_SCHEMAS
+
+        data: Dict[str, Any] = {
+            "envelope": envelope,
+            "payload_digest": digest,
+            "payload_recorded": bool(full_payload),
+        }
+        if summary:
+            data["summary"] = summary
+        if full_payload:
+            data["payload"] = contract.payload()
+        else:
+            data["summary"] = summary or (
+                contract.summary() if hasattr(contract, "summary") else {"schema": contract.SCHEMA}
+            )
+        self.log_event(f"contract:{contract.SCHEMA}", data)
+        return digest
+
+    #: Contracts recorded as summary + digest rather than full payload.
+    COMPACT_PAYLOAD_SCHEMAS = frozenset({"world-state", "evidence-set"})
+
+    def log_contract_rejection(self, action_id: str, reason: Dict[str, Any], stage: str):
+        """Record that an action never ran, and why."""
+        self.log_event(
+            "action_rejected",
+            {"action_id": action_id, "stage": stage, "reason": reason},
+        )
+
     def log_verification(self, finding_id: str, method: str, success: bool, evidence_id: str = None):
         self.log_event(
             "verification",
@@ -172,8 +216,77 @@ class AuditLogger:
             finding_traces.append(trace)
 
         report["finding_traces"] = finding_traces
+        report["correlation_chains"] = self.correlation_chains(state)
+        report["contracts"] = self.contract_catalogue()
 
         return report
+
+    @staticmethod
+    def contract_catalogue() -> Dict[str, Any]:
+        """The contract schemas and versions this build produces and consumes."""
+        from ...contracts.registry import get_contract_registry
+
+        return get_contract_registry().describe()
+
+    @staticmethod
+    def correlation_chains(state: AssessmentState) -> List[Dict[str, Any]]:
+        """
+        Reconstruct the causal chain required by specification section 17:
+
+            assessment_id -> action_id -> execution_id -> evidence_id -> verification_id
+
+        One entry per action, so a reader can answer "which operation produced this evidence,
+        and what did the framework conclude from it" without walking the whole event log.
+        """
+        chains: List[Dict[str, Any]] = []
+        evidence_by_execution: Dict[str, List[str]] = {}
+        for evidence in state.evidences:
+            if evidence.execution_id:
+                evidence_by_execution.setdefault(evidence.execution_id, []).append(evidence.id)
+
+        verifications = state.extra.get("verifications") or []
+        verification_by_execution: Dict[str, List[str]] = {}
+        verification_by_evidence: Dict[str, List[str]] = {}
+        for entry in verifications:
+            execution_id = entry.get("execution_id")
+            verification_id = entry.get("verification_id")
+            if execution_id and verification_id:
+                verification_by_execution.setdefault(execution_id, []).append(verification_id)
+            for evidence_id in entry.get("supporting_evidence") or []:
+                verification_by_evidence.setdefault(evidence_id, []).append(verification_id)
+
+        for record in state.execution_history:
+            evidence_ids = record.evidence_ids or evidence_by_execution.get(record.id, [])
+            verification_ids = sorted(
+                set(verification_by_execution.get(record.id, []))
+                | {
+                    verification_id
+                    for evidence_id in evidence_ids
+                    for verification_id in verification_by_evidence.get(evidence_id, [])
+                }
+            )
+            chains.append(
+                {
+                    "assessment_id": state.id,
+                    "action_id": record.action_id,
+                    "execution_id": record.id,
+                    "correlation_id": record.correlation_id,
+                    "capability": record.capability_name,
+                    "status": record.status or ("success" if record.success else "failed"),
+                    "timestamp": record.timestamp.isoformat(),
+                    "evidence_ids": list(evidence_ids),
+                    "verification_ids": verification_ids,
+                    "artifact_ids": list(record.artifact_ids),
+                    "finding_ids": sorted(
+                        {
+                            finding.id
+                            for finding in state.findings
+                            if set(finding.evidence_ids) & set(evidence_ids)
+                        }
+                    ),
+                }
+            )
+        return chains
 
     def save_report(self, state: AssessmentState, output_path: str = None) -> str:
         """Save report to file."""

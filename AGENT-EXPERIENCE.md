@@ -271,3 +271,203 @@ The senior developer guidelines (thorough research, documentation, security-firs
 
 **Push but Don't Merge**: As requested, pushed to arena/01a0aafb-wifi branch, not merging to main. This preserves audit trail and allows review before any merge decision, following guideline 23 NEVER MERGE THIS GIT.
 
+---
+
+## Session: 2026-09-16 - Explicit Data Contract Layer (v0.4.0)
+
+### Context
+
+v0.3.0 had 58 real tool adapters and a working adaptive loop, but the subsystems talked to each
+other through direct method calls. The specification's core architecture requires five subsystems
+communicating **only** through explicit, versioned data contracts, with the rule that "no engine
+may know how another engine works internally". This session implemented that layer: ten contracts,
+six subsystem boundaries, an orchestrating loop rewired through them, and a test suite that grew
+from 24 to 224 tests.
+
+Plan: `docs/CONTRACT_LAYER_PLAN.md` (milestones M1-M8, all complete).
+Reference: `docs/DATA_CONTRACTS.md`.
+
+### Challenges Encountered
+
+#### 1. A latent crash in the planning view, found only by an integration test
+
+`WorldStateView._evidence()` read `observation.tags`, but `ObservationRef` has no `tags` field -
+the contract projects scope and staleness as explicit typed fields instead. The result: **any
+assessment that had observed at least one thing crashed at planning**, and no unit test caught it
+because no unit test ever published a state containing an observation and then planned from it.
+
+The fix was not to add a `tags` field to the contract (that would have weakened its shape) but to
+rebuild the model-layer tags from `in_scope`/`stale` in the consumer. Lesson: a shim between two
+representations is exactly where a field-name mismatch hides, and only a test that crosses the
+boundary will find it.
+
+#### 2. A scope-enforcement hole that a single test assertion exposed
+
+`AssessmentScope.is_wireless_asset_authorized` returned "either identifier matches is enough".
+Combined with `is_ssid_authorized` returning `not strict_mode` when no SSID allowlist exists, an
+operator who authorised *only* specific BSSIDs would have an unauthorised AP waved through by a
+vacuously true SSID check - i.e. a de-authentication against a neighbour's access point could be
+authorised.
+
+The fix keeps the documented "either matches" intent but requires that an identifier can only
+*grant* authorisation when the operator actually used that identifier to define scope. An empty
+list means "not used to define scope", not "anything goes". Four regression tests now pin this,
+including the case that both declared identifiers still authorise when both are declared.
+
+This was pre-existing v0.1.0 code. Changing security-relevant behaviour in someone else's code is
+not something to do silently, so it is recorded in the changelog under Fixed **and** flagged for
+maintainer review rather than buried.
+
+#### 3. Policy check order changed which refusal the operator saw
+
+With capability checked before scope, a request for an out-of-scope target using a missing tool
+reported `capability_unavailable`. The operator would go install a tool for an action that should
+never have been considered. Specification section 11 puts scope before capability; after
+reordering, the same request reports `scope_denied_wireless` and is never retried.
+
+Related subtlety: a *hard rejection* must take precedence over a *deferral* even when both occur,
+otherwise an unsafe parameter would be reported as "tool missing, try later".
+
+#### 4. Fail-closed invasiveness
+
+`_check_scope` initially treated unresolvable metadata as non-invasive (`else False`), so an
+unknown capability sailed through the scope gate. An unknown capability cannot be shown to be
+passive, so it must be treated as invasive. One-line change, but it is the difference between a
+scope gate that enforces and one that decorates.
+
+#### 5. The selector happily chose tools that could not possibly help
+
+In a sandbox with no wireless tools, the loop selected `curl` to resolve "no access points
+observed" - because `curl` scored positive on "non-invasive" and "phase-appropriate" even though
+it produces no observation relevant to the gap. It then failed, got re-selected, and burned
+iterations.
+
+Two fixes: a relevance gate in `ActionSelector.score_capability` (a capability producing none of
+the outputs the gap needs scores `-1.0`, i.e. unselectable), and capability blocking on refusal
+(permanent for scope/unknown/unsafe-parameter refusals, a 3-iteration cooldown for transient
+ones). After both, the same run completes in one iteration with "no further actions planned" -
+which is the philosophy's actual requirement: the objective is not to maximise commands executed.
+
+#### 6. An assumption I got wrong, caught by writing it down as a test
+
+I wrote a test asserting that POSIX `subprocess.run` discards output written before a timeout kill,
+to explain why a timed-out run reports `timeout` rather than `partial`. The test failed: partial
+output **is** returned. The real reason is further up the stack - `IwDevAdapter.parse_output`
+returns nothing when the exit code is non-zero, so the adapter itself declines to interpret output
+from a failed run.
+
+Both tests are now in the suite, documenting the actual mechanism. Writing down an assumption as an
+executable test is how you find out it is wrong; had I left it as a code comment, the comment would
+still be lying.
+
+#### 7. Failure attribution pointed at the wrong problem
+
+`ExecutionGateway.prepare()` checked interface derivation before tool availability, so a request
+for `airodump-ng` on a machine without it reported `interface_unavailable` - sending the operator
+after an interface problem when the real blocker was a missing binary. It also made the refusal
+look retriable, so the capability got re-requested forever. A cheap `shutil.which` check now runs
+first and yields `tool_not_found`, which blocks permanently.
+
+Note the deliberate choice of `shutil.which` over `check_tool_available`: the latter runs up to four
+version probes with 5-second timeouts each. In `prepare()` - which runs per action - that cost is
+unacceptable, and it was also what made an early version of the integration suite take 142 seconds
+instead of 4.
+
+#### 8. Contracts built in-process were not shaped like parsed ones
+
+`_coerce_payload` ran only on the `parse()` path, so `VerificationResult(required_evidence=[{...}])`
+held plain dicts where a parsed one held `EvidenceRequirement` objects - and the World Model applier
+crashed calling `.to_dict()` on a dict. Normalisation now runs in `BaseContract.__post_init__` for
+both paths. All coercion hooks are `isinstance`-guarded, so they are idempotent and safe to re-run.
+
+### Technical Decisions
+
+1. **`contracts/` imports nothing from `core/`.** This one dependency rule is what makes engines
+   independently replaceable. It also means contracts can be tested with no tools installed.
+2. **Two wire forms, one object.** `to_message()` (envelope + nested payload) is canonical and is
+   what the audit trail stores; `to_dict()` (flat) exists for logs. Both parse back identically,
+   and a test asserts the equivalence so they cannot drift.
+3. **Semantic rules make dishonest states unrepresentable** rather than documenting them: a
+   `failed` execution must carry a failure record, a `success` must not, a never-executed status
+   must not claim an exit code, `verified` requires two independent sources.
+4. **`WorldModelApplier` is the only writer** from contracts into the World Model, and it refuses
+   evidence the `evidence-set` did not declare. Nothing enters the model unaccounted for.
+5. **The Verification Engine returns action requests, never executes.** The separation is
+   structural, not disciplinary.
+6. **Experience is a hint.** Scores travel in `world-state.planner_hints`, deliberately separate
+   from observed facts, so a ranking prior cannot be mistaken for an observation.
+7. **Bootstrap discovery is an `action-request`** with objective `discover_interfaces`. Interface
+   and capability discovery happen before any WorldState exists, but they are still real operations
+   against real tools, so routing them through the same pipeline means *every* execution carries an
+   `action_id` and is traceable.
+8. **Envelope shape follows CloudEvents 1.0**; correlation chains follow W3C PROV-O
+   (`wasGeneratedBy`/`used`/`wasDerivedFrom`). Reusing established vocabularies keeps the design
+   defensible rather than invented.
+
+### Remaining Limitations
+
+- **No field verification.** This sandbox has no wireless hardware and no Kali tools. Everything
+  depending on radios, monitor mode, injection, or the presence of `airodump-ng`/`wash`/`reaver`/
+  `hcxdumptool`/`nmap` is implemented but **not field-verified**. Stated explicitly in
+  `docs/CONTRACT_LAYER_PLAN.md` section 8 and in the changelog.
+- **Stub binaries are fixtures.** The integration suite's canned `iw dev` transcript exercises real
+  framework code but demonstrates nothing about any real environment. No output from it may be read
+  as a security finding.
+- **Adapters that gate on exit code lose partial output.** A timed-out `iw dev` reports `timeout`,
+  not `partial`, because the adapter refuses to parse non-zero-exit output. File-writing capture
+  tools are how partial output reaches the model. Whether to relax the gate per adapter is an open
+  question - it needs hardware to evaluate honestly.
+- **Undeclared network scope permits passive discovery of any host** (`is_ip_authorized` returns
+  true when no networks are declared). Pre-0.4.0 semantics, deliberately not changed here: whether
+  a wireless-only scope should constrain network-layer targets is a policy decision for the
+  maintainer, and it is flagged in the changelog's Known limitations.
+
+### Success Metrics
+
+- [x] M1-M8 of `docs/CONTRACT_LAYER_PLAN.md` complete
+- [x] Ten contracts, all at version 1.0, each with a producer, a consumer and tests
+- [x] 224 tests pass in ~4s with no wireless hardware and no Kali tools installed
+- [x] The 24 pre-existing tests pass **unmodified** (regression gate for M5)
+- [x] End-to-end loop proven against a real subprocess, including failure, timeout, missing tool,
+      scope refusal and unsafe-parameter refusal
+- [x] Correlation chain `assessment_id -> action_id -> execution_id -> evidence_ids ->
+      verification_ids -> finding_ids` present for every execution in the generated report
+- [x] CLI unchanged in interface: `--discover-only`, `--ssid`, `--max-iterations`, `--output` all
+      behave as before, with honest `unsupported` reporting where tools are absent
+- [x] No new runtime dependency (`pyyaml` only); no `shell=True` anywhere
+- [x] Four real defects found and fixed by the new tests (planning-view crash, scope hole,
+      failure misattribution, contract shape divergence)
+
+### Next Steps
+
+1. Field verification on Kali with real hardware: monitor mode, injection, handshake capture, WPS
+   PIN recovery - and re-check the timeout/partial behaviour against real capture tools
+2. Decide the undeclared-network-scope question above
+3. Additional adapters: airdriver-ng, ivstools; deeper parsers for horst, wavemon, kismet logs,
+   hcxdumptool status counters
+4. AI-based decision system as an optional planner behind `planning-context`/`decision-proposal`
+   (the contracts already forbid it from expressing a command)
+5. Web UI for assessment visualization, reading the report's correlation chains
+6. Performance benchmarks for large-scale assessments
+
+### Reflection
+
+The value of this session was not the ten dataclasses. It was that making the boundaries explicit
+turned four latent defects into failing tests: a crash that would have hit every real assessment, a
+scope hole that could have authorised an attack on a neighbour's network, a failure message that
+would have sent an operator chasing the wrong problem, and a contract whose shape depended on how
+it was built.
+
+None of those were visible while the subsystems called each other directly, because nothing had to
+state what it was producing. A contract is a claim about what a message means, and writing the
+claim down is what makes it checkable.
+
+The other lesson is about honesty under constraint. Without hardware, the temptation is either to
+over-claim ("the framework works") or to under-deliver ("cannot be tested"). The productive path
+was a third option: test what is testable with real subprocesses and stub binaries, label the
+stubs as fixtures, and state precisely which paths remain unverified. A limitation that is written
+down is a limitation a reviewer can act on; one that is glossed over is a defect waiting to happen
+in someone's authorised engagement.
+
+**Push but don't merge**: work stays on `arena/01a0ab79-wifi` per guideline 23 (NEVER MERGE THIS
+GIT). Review before any merge decision.

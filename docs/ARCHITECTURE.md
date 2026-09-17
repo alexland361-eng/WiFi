@@ -55,6 +55,59 @@ WiFi Framework is designed as a real Wi-Fi penetration-testing and security-asse
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Contract Layer
+
+Since 0.4.0 the subsystems above do not call each other's internals. They exchange **versioned,
+validated, immutable messages**, and the message is the interface. The full reference — envelope,
+catalogue, validation levels, versioning rules, correlation chains — lives in
+[DATA_CONTRACTS.md](DATA_CONTRACTS.md).
+
+```
+        world-state                      action-request
+   ┌────────────────┐   ┌──────────┐   ┌──────────────┐   ┌──────────────┐
+   │  World Model   │──►│ Decision │──►│    Policy    │──►│  Execution   │
+   │ publisher +    │   │  Engine  │   │  (validate)  │   │   Gateway    │
+   │ applier        │   └──────────┘   └──────────────┘   └──────┬───────┘
+   └───────▲────────┘  action-validation-result                  │
+           │                                             execution-result
+           │ evidence-set                                        ▼
+   ┌───────┴────────┐   verification-request   ┌──────────────────────┐
+   │    Evidence    │─────────────────────────►│    Verification      │
+   │     Engine     │◄─────────────────────────│      Engine          │
+   └────────────────┘   verification-result    └──────────┬───────────┘
+                                                          │
+                                               ┌──────────▼───────────┐
+                                               │     Experience       │
+                                               └──────────────────────┘
+```
+
+Ten contracts, all at version `1.0`:
+
+| Contract | Producer | Purpose |
+|---|---|---|
+| `world-state` | World Model | The authoritative projection the Decision Engine plans from |
+| `planning-context` | Decision | Constrained view handed to an AI/planner layer |
+| `decision-proposal` | AI | A proposed capability and target — **never a command** |
+| `action-request` | Decision | What to do, why, against which target |
+| `action-validation-result` | Policy | approved / rejected / deferred, with a structured reason |
+| `execution-result` | Execution | What actually ran, what it returned, where the output is |
+| `evidence-set` | Evidence | Attributed, scoped observations plus declared extraction problems |
+| `verification-request` | Evidence | A claim that must not be trusted on one source |
+| `verification-result` | Verification | verified / supported / unresolved / contradicted / refuted / stale |
+| `experience-record` | Experience | Information gain versus cost, as a ranking hint only |
+
+Invariants enforced by code and pinned by tests:
+
+* `WorldModelApplier` is the **only** writer from contracts into the World Model; evidence not
+  declared in an `evidence-set` is refused rather than applied.
+* The Evidence Engine never decides the next action; the Verification Engine never executes a tool
+  (it returns an `action-request` for the Decision Engine to schedule).
+* A single observation can never reach `verified` — two independent sources are required.
+* Out-of-scope observations are tagged and generate no verification requests.
+* A tool that was never invoked reports `unsupported`/`rejected` with `exit_code = None`, never a
+  fabricated failure and never a silent skip.
+* `contracts/` imports nothing from `core/`, which is what keeps engines independently replaceable.
+
 ## Core Models
 
 ### Evidence
@@ -491,10 +544,26 @@ class AssessmentEngine:
 
 ## Testing
 
-- Unit tests for models, parsers, scope, planner, etc.
-- Mock subprocess for adapter tests
-- Discover-only works without hardware
-- Full assessment requires hardware
+224 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+`pyproject.toml`, so no install step is needed):
+
+| Suite | Covers |
+|---|---|
+| `test_contracts.py` | Envelope, both wire forms, version negotiation, digests, every semantic rule |
+| `test_policy.py` | Scope / capability / parameter stages, fail-closed invasiveness, refusals |
+| `test_evidence_engine.py` | Provenance, scope tagging, verification-request generation, no fabrication |
+| `test_verification_engine.py` | Noisy-OR aggregation, all six verification states, freshness, contradiction |
+| `test_world_state.py` | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
+| `test_contract_pipeline.py` | The full loop against a **real subprocess** (stub binaries on `PATH`) |
+| `test_adapters/executor/models/parsers/planner/scope.py` | Pre-0.4.0 suites, unmodified |
+
+The integration suite puts stub binaries on `PATH` and drives the production adapters, parsers,
+gateway and policy through real `subprocess` calls. Stubs record their own invocations, which lets
+the tests prove a negative: that a scope-refused action never reached the tool.
+
+**What cannot be verified without hardware:** monitor mode, packet injection, and any behaviour
+depending on the presence of Kali tools (`airodump-ng`, `wash`, `reaver`, `hcxdumptool`, `nmap`).
+Those paths are implemented, not field-verified.
 
 ## Future
 

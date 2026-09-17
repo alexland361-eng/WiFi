@@ -161,11 +161,17 @@ class CapabilityExecutor:
         parameters: Dict[str, Any] = None,
         timeout: int = 60,
         state: Optional[AssessmentState] = None,
+        record_state: bool = True,
     ) -> ExecutionResult:
         """
         Execute a capability.
 
         Handles capability-aware execution with real tool invocation.
+
+        ``record_state=False`` still derives parameters from ``state`` but leaves writing the
+        execution record and evidence to the caller. The contract-driven path uses this so that
+        state is written once, by the World Model applier, after the Evidence Engine has
+        attributed the observations (added in 0.4.0; default preserves 0.3.0 behaviour).
         """
         parameters = parameters or {}
         state = state or self.assessment_state
@@ -218,7 +224,7 @@ class CapabilityExecutor:
         execution_id = adapter.execution_id
 
         # Create execution record if state available
-        if state:
+        if state and record_state:
             record = ExecutionRecord(
                 id=execution_id,
                 capability_name=capability_name,

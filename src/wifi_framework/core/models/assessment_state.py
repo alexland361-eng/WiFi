@@ -71,6 +71,15 @@ class ExecutionRecord:
     # For experience learning
     information_gain: float = 0.0
     cost: float = 0.0
+    # --- added in 0.4.0 for the contract correlation chain (all optional) ----
+    #: Identifier of the ``action-request`` that caused this execution.
+    action_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+    #: Enumerated ``execution-result`` status (success/partial/failed/timeout/unsupported/...),
+    #: which carries more information than ``success`` alone.
+    status: Optional[str] = None
+    #: Artifact identifiers holding the raw output streams and any files the tool wrote.
+    artifact_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +97,10 @@ class ExecutionRecord:
             "failure_reason": self.failure_reason,
             "information_gain": self.information_gain,
             "cost": self.cost,
+            "action_id": self.action_id,
+            "correlation_id": self.correlation_id,
+            "status": self.status,
+            "artifact_ids": self.artifact_ids,
         }
 
 
