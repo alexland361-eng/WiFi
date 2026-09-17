@@ -41,13 +41,47 @@ SERIES="$(echo "$KREL" | grep -oE '^[0-9]+\.[0-9]+' || true)"
 [ -n "$SERIES" ] || fail "cannot parse kernel series from $KREL"
 
 BASE="https://raw.githubusercontent.com/torvalds/linux"
+API="https://api.github.com/repos/torvalds/linux/contents"
 DIR="drivers/net/wireless/virtual"
+
+# raw.githubusercontent.com intermittently refuses connections from runners,
+# which failed a whole verification run for want of one source file. Retry with
+# backoff, then fall back to the API host, which has separate rate limits.
+fetch_one() {
+  local ref="$1" file="$2" attempt
+  for attempt in 1 2 3; do
+    if curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 90 \
+        -o "$file" "$BASE/$ref/$DIR/$file"; then
+      return 0
+    fi
+    echo "  raw CDN attempt $attempt failed for $file; backing off"
+    sleep $((attempt * 5))
+  done
+  echo "  falling back to the GitHub API for $file"
+  curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 --max-time 90 \
+    -H "Accept: application/vnd.github.raw" \
+    -o "$file" "$API/$DIR/$file?ref=$ref"
+}
+
+looks_like_source() {
+  local file="$1"
+  [ -s "$file" ] && grep -q "mac80211_hwsim" "$file"
+}
 
 fetch_source() {
   local ref="$1"
   echo "--- fetching driver source at $ref"
-  curl -fsSL --retry 3 --max-time 60 -o mac80211_hwsim.c "$BASE/$ref/$DIR/mac80211_hwsim.c" \
-    && curl -fsSL --retry 3 --max-time 60 -o mac80211_hwsim.h "$BASE/$ref/$DIR/mac80211_hwsim.h"
+  fetch_one "$ref" mac80211_hwsim.c || return 1
+  fetch_one "$ref" mac80211_hwsim.h || return 1
+  looks_like_source mac80211_hwsim.c || {
+    echo "  downloaded mac80211_hwsim.c does not look like the driver source"
+    head -c 300 mac80211_hwsim.c
+    return 1
+  }
+  looks_like_source mac80211_hwsim.h || {
+    echo "  downloaded mac80211_hwsim.h does not look like the driver header"
+    return 1
+  }
 }
 
 if ! fetch_source "v$SERIES"; then
