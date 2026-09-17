@@ -79,7 +79,28 @@ echo "built vermagic : $(modinfo -F vermagic ./mac80211_hwsim.ko 2>/dev/null || 
 echo "running kernel : $KREL"
 echo "module deps    : $(modinfo -F depends ./mac80211_hwsim.ko 2>/dev/null || echo unknown)"
 
-if ! INSMOD_OUT=$(sudo insmod ./mac80211_hwsim.ko radios="$RADIOS" 2>&1); then
+# cfg80211 and mac80211 are =m on this kernel, so their symbols are absent from
+# /proc/kallsyms until they are loaded. insmod does not resolve dependencies and
+# fails with "Unknown symbol"; installing into the module tree and using modprobe
+# lets depmod order them correctly.
+echo "--- pre-loading dependencies"
+for dep in cfg80211 mac80211; do
+  if sudo modprobe "$dep" 2>&1; then
+    echo "  $dep loaded"
+  else
+    echo "  $dep could not be loaded (may be built in, or absent)"
+    echo "::notice title=hwsim::modprobe $dep failed on $KREL"
+  fi
+done
+lsmod | grep -E '^(cfg80211|mac80211)\b' || echo "  WARNING: neither dependency visible in lsmod"
+
+DEST="/lib/modules/$KREL/extra"
+sudo mkdir -p "$DEST"
+sudo cp mac80211_hwsim.ko "$DEST/"
+sudo depmod -a "$KREL"
+echo "--- installed to $DEST and ran depmod"
+
+if ! INSMOD_OUT=$(sudo modprobe mac80211_hwsim radios="$RADIOS" 2>&1); then
   echo "$INSMOD_OUT"
   # The kernel's own reason (unknown symbol, CRC disagreement, bad vermagic)
   # only appears in dmesg, and job logs are not reachable from here, so both
@@ -96,14 +117,14 @@ if ! INSMOD_OUT=$(sudo insmod ./mac80211_hwsim.ko radios="$RADIOS" 2>&1); then
     echo "--- symbols required by the module but absent from the running kernel ---"
     echo "${MISSING:-  (none - rejection is not a missing symbol)}"
     if [ -n "$MISSING" ]; then
-      echo "::error title=insmod-missing-symbols::$(echo "$MISSING" | tr '\n' ' ' | cut -c1-900)"
+      echo "::error title=load-missing-symbols::$(echo "$MISSING" | tr '\n' ' ' | cut -c1-900)"
     fi
   fi
 
-  note "insmod rejected; built vermagic=$(modinfo -F vermagic ./mac80211_hwsim.ko 2>/dev/null || echo unknown) running=$KREL"
-  echo "::error title=insmod-stderr::$(echo "$INSMOD_OUT" | tr '\n' ' ' | cut -c1-900)"
-  echo "::error title=insmod-dmesg::$(echo "$DMESG_OUT" | grep -iE 'hwsim|symbol|version|module' | tr '\n' ' ' | cut -c1-900)"
-  fail "insmod mac80211_hwsim.ko failed"
+  note "module load rejected; built vermagic=$(modinfo -F vermagic ./mac80211_hwsim.ko 2>/dev/null || echo unknown) running=$KREL"
+  echo "::error title=load-stderr::$(echo "$INSMOD_OUT" | tr '\n' ' ' | cut -c1-900)"
+  echo "::error title=load-dmesg::$(echo "$DMESG_OUT" | grep -iE 'hwsim|symbol|version|module' | tr '\n' ' ' | cut -c1-900)"
+  fail "modprobe mac80211_hwsim radios=$RADIOS failed"
 fi
 
 sleep 2
