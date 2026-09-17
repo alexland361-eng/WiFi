@@ -380,6 +380,28 @@ held plain dicts where a parsed one held `EvidenceRequirement` objects - and the
 crashed calling `.to_dict()` on a dict. Normalisation now runs in `BaseContract.__post_init__` for
 both paths. All coercion hooks are `isinstance`-guarded, so they are idempotent and safe to re-run.
 
+#### 9. Writing a test for a seam found a silent tool substitution
+
+Quality gate 5 ("every contract has a producer, a consumer and a test") was satisfied for
+`decision-proposal` and `planning-context` at the *contract* level, but nothing tested the seam that
+consumes them: `DecisionEngine.planning_context()` and `accept_proposal()`. Writing that test file
+immediately failed an assumption I had made while drafting it.
+
+I expected a proposal naming an unavailable implementation to be refused. It was not: when the
+capability *category* was known, `accept_proposal` ran `_select_implementation` and silently
+returned a different tool. An AI proposing `reaver` got `wash`, and nothing recorded the swap.
+
+The behaviour was defensible - running an available alternative beats refusing to act - but the
+silence was not. "Why this tool and not another" is one of the questions the audit trail exists to
+answer, so the substitution is now appended to the returned problems, which the trail persists
+either way. Two tests replaced the one: the substitution is recorded, and a category where *nothing*
+is available is still refused outright.
+
+Lesson: an untested seam is not merely untested, it is where assumptions go to be wrong quietly. The
+test that failed was written from the documentation of intent, not from the code - which is exactly
+why it caught the divergence. Note also that `accept_proposal` has no production caller yet, so the
+fix changed no live control flow; that had to be checked before changing it, not assumed.
+
 ### Technical Decisions
 
 1. **`contracts/` imports nothing from `core/`.** This one dependency rule is what makes engines
@@ -435,8 +457,10 @@ both paths. All coercion hooks are `isinstance`-guarded, so they are idempotent 
 - [x] CLI unchanged in interface: `--discover-only`, `--ssid`, `--max-iterations`, `--output` all
       behave as before, with honest `unsupported` reporting where tools are absent
 - [x] No new runtime dependency (`pyyaml` only); no `shell=True` anywhere
-- [x] Four real defects found and fixed by the new tests (planning-view crash, scope hole,
-      failure misattribution, contract shape divergence)
+- [x] Five real defects found and fixed by the new tests (planning-view crash, scope hole,
+      failure misattribution, contract shape divergence, silent tool substitution at the AI seam)
+- [x] Every acceptance criterion in `docs/CONTRACT_LAYER_PLAN.md` section 7 is backed by a named
+      test, not by inspection
 
 ### Next Steps
 
@@ -445,8 +469,12 @@ both paths. All coercion hooks are `isinstance`-guarded, so they are idempotent 
 2. Decide the undeclared-network-scope question above
 3. Additional adapters: airdriver-ng, ivstools; deeper parsers for horst, wavemon, kismet logs,
    hcxdumptool status counters
-4. AI-based decision system as an optional planner behind `planning-context`/`decision-proposal`
-   (the contracts already forbid it from expressing a command)
+4. AI-based decision system as an optional planner behind `planning-context`/`decision-proposal`.
+   The seam itself is complete and tested (`tests/test_decision_engine.py`): the context is a
+   narrowed projection that forwards no raw observations and no commands, proposal intake refuses
+   structurally invalid / cross-assessment / unfulfillable proposals, and acceptance is not
+   authorisation. What remains is the planner - a model that consumes the context and returns a
+   proposal, with its own evaluation harness
 5. Web UI for assessment visualization, reading the report's correlation chains
 6. Performance benchmarks for large-scale assessments
 
