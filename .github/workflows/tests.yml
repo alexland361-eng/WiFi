@@ -32,7 +32,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          # `full` pulls scapy, an optional dependency. Installing it means the
+          # Scapy adapter tests run rather than skip, which matters because that
+          # adapter is where the arbitrary-code-execution defect was found.
+          pip install -e ".[full]"
           pip install pytest pytest-cov
 
       - name: Run test suite
@@ -122,7 +125,8 @@ jobs:
       - name: Install framework
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[full]"
+          python -c "import scapy; print('scapy', scapy.__version__)"
 
       - name: Verify InterfaceManager against the virtual radio
         run: |

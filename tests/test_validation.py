@@ -395,6 +395,28 @@ def test_no_module_in_the_package_invokes_a_shell():
     assert offenders == []
 
 
+def test_no_module_executes_caller_supplied_code():
+    """
+    ``exec``/``eval``/``compile`` on data is an arbitrary-code-execution primitive that bypasses
+    every other control in this codebase: the policy layer rejects shell metacharacters, but pure
+    Python needs none of them, and the no-shell sweep above cannot see it because no shell is
+    involved. ``ScapyAdapter`` used to ``exec()`` a ``script`` parameter with full ``__builtins__``;
+    this pins that the pattern cannot come back.
+
+    Only bare-name calls are matched, so ``re.compile(...)`` - an attribute access, used widely and
+    legitimately - is not flagged.
+    """
+    offenders = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id in ("exec", "eval", "compile"):
+                offenders.append(f"{path.relative_to(PACKAGE_ROOT)}:{node.lineno} {node.func.id}()")
+    assert offenders == [], f"dynamic code execution found: {offenders}"
+
+
 def test_a_malformed_scope_bssid_does_not_authorise_a_different_network():
     """
     The security consequence of strict normalisation, pinned at the layer where it matters.
