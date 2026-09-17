@@ -844,10 +844,27 @@ failing build.
 ### Environment Constraints (confirmed, not assumed)
 - The dev sandbox cannot run any wireless verification: monolithic kernel, no wireless stack,
   `mac80211_hwsim` impossible. CI is the only path.
-- `*.ngrok*` URLs are wildcard-sinkholed in the sandbox — DNS returns a catch-all pool for real and
-  impossible subdomains alike, TCP connects, TLS drops EOF. No tunnel will work; do not retry.
-  `gethostbyname` is unreliable for detecting this (returns one rotating IP); use `getaddrinfo` and
-  compare against a known-impossible subdomain.
+- **The sandbox has a narrow egress allowlist: essentially PyPI and GitHub only.** Everything else
+  is blocked, and no tunnel to a user's machine can work regardless of provider. Reachable:
+  `pypi.org`, `files.pythonhosted.org`, `github.com`, `api.github.com`. Blocked with an identical
+  signature: `example.com`, `www.google.com`, `1.1.1.1`, `raw.githubusercontent.com`, and every
+  `*.ngrok-free.*` host.
+  - The blocked signature is: DNS resolves to a catch-all AWS pool (`13.56.217.111`, `184.72.44.51`,
+    ...), TCP connect *succeeds* because the sinkhole answers, then TLS is dropped at EOF
+    (`SSLZeroReturnError`, `curl` exit 35, `http_code=000`, zero bytes transferred).
+  - **Correction to an earlier note in this file**, which attributed this to `*.ngrok*` being
+    wildcard-sinkholed. That diagnosis was too narrow and was wrong in a way that matters: it
+    implied the problem was ngrok-specific and that a different domain or provider might work.
+    Testing `example.com` and `1.1.1.1` disproves that - they fail identically. The `.ngrok-free.dev`
+    vs `.ngrok-free.app` distinction is a red herring for the same reason.
+  - Diagnostic lesson: a wildcard DNS pool is the *symptom* of an egress block here, not evidence
+    about any one provider. Always compare against a neutral host before concluding a specific
+    service is at fault - otherwise the failure gets blamed on the user's setup instead of the
+    sandbox. `getaddrinfo` plus a deliberately impossible control subdomain distinguishes
+    wildcard-DNS from real resolution; `gethostbyname` does not (it returns one rotating IP).
+  - Note the direction that *does* work: the sandbox can serve a preview that the user's browser
+    reaches (`https://{port}-{sandboxId}.e2b.app`). It cannot dial out to the user. Results from a
+    user's own hardware have to travel back via chat paste or via GitHub, which is reachable.
 - CI job logs live on Azure blob storage and are unreachable from the sandbox. `::notice`/`::error`
   annotations are readable via
   `gh api repos/{owner}/{repo}/check-runs/{job_id}/annotations`, which is why every verification

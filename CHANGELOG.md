@@ -498,7 +498,9 @@ for the milestone plan this release completes.
   vacuously. Runs by hand on a Kali box with a physical adapter; 17/17 checks pass on hwsim.
 - **`scripts/remote_hwsim.py`**: wrapper for a remote hwsim execution API, for iterating without a
   CI round trip. Endpoint comes from `HWSIM_ENDPOINT` rather than being hardcoded - a tunnel URL is
-  ephemeral and private, and committing one puts a stale secret in history.
+  ephemeral and private, and committing one puts a stale secret in history. **Usable only from a
+  machine with normal internet access**: the dev sandbox's egress is restricted to PyPI and GitHub,
+  so it cannot reach any tunnel from any provider. CI supersedes this path entirely.
 - **`tests/test_interface_manager.py`** (39 tests): pins all four fixes below using output captured
   verbatim from the runner. Suite 380 -> 419. `tool_manager.py` coverage 58% -> 68%,
   `interface_manager.py` 13% -> 32%.

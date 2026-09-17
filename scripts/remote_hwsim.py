@@ -11,6 +11,13 @@ The endpoint is read from the HWSIM_ENDPOINT environment variable rather than
 hardcoded: a tunnel URL is ephemeral and private, and committing one guarantees
 a stale secret in git history.
 
+This script is for running *outside* the Arena dev sandbox. That sandbox's egress
+is restricted to PyPI and GitHub, so it cannot reach any tunnel - not ngrok, not
+Cloudflare, not any other provider. Attempts there fail at the TLS handshake with
+zero bytes transferred, which looks like a dead tunnel but is the sandbox. CI
+replaces this path: the `wireless verification` job builds and loads hwsim on a
+GitHub runner and needs no tunnel at all.
+
     export HWSIM_ENDPOINT="https://<your-tunnel>.ngrok-free.app"
     python3 scripts/remote_hwsim.py probe
     python3 scripts/remote_hwsim.py run scripts/verify_wireless_hardware.py
@@ -45,7 +52,11 @@ def endpoint() -> str:
         sys.exit(
             "HWSIM_ENDPOINT is not set.\n"
             '  export HWSIM_ENDPOINT="https://<your-tunnel>.ngrok-free.app"\n'
-            "A bare 'ngrok-free.dev' is a placeholder and will not route."
+            "\n"
+            "Note: this cannot be run from the Arena dev sandbox, whose egress is restricted to\n"
+            "PyPI and GitHub. Any other host - including every tunnel provider - fails at the TLS\n"
+            "handshake with zero bytes transferred, so the failure is the sandbox, not the tunnel.\n"
+            "Run this from a machine with normal internet access."
         )
     return url
 
