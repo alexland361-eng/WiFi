@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -741,9 +743,22 @@ def test_an_unserialisable_value_does_not_make_the_digest_vary_between_processes
         "print(message_digest({'x': Opaque()}))\n"
     )
 
+    # The child must be able to import the package however the parent found it -
+    # installed into site-packages or running from a source checkout. Without this
+    # the child dies with ModuleNotFoundError and the test reports a digest problem
+    # that is really an environment problem.
+    import wifi_framework
+
+    package_parent = str(Path(wifi_framework.__file__).resolve().parent.parent)
+    child_env = dict(os.environ)
+    existing = child_env.get("PYTHONPATH", "")
+    child_env["PYTHONPATH"] = package_parent + (os.pathsep + existing if existing else "")
+
     digests = set()
     for _ in range(3):
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=90)
+        proc = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=90, env=child_env
+        )
         assert proc.returncode == 0, proc.stderr
         digests.add(proc.stdout.strip())
 
