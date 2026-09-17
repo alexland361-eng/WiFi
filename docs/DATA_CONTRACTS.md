@@ -54,8 +54,16 @@ message = contract.to_message()   # canonical: envelope + nested "payload"
 flat    = contract.to_dict()      # flat: envelope fields merged with payload
 ```
 
-Both parse back to an identical object. `to_message()` is what the audit trail stores; `to_dict()`
-exists for logs and human inspection.
+Both parse back to an identical object, and a test asserts the equivalence so the two forms cannot
+drift. `to_message()` is the canonical interchange form; `to_dict()` exists for logs and human
+inspection.
+
+The audit trail does **not** store either verbatim. `AuditLogger.log_contract()` records the
+envelope plus a `payload_digest` (so any message can be matched against a reconstructed one), and
+inlines the full payload only for the small, decision-bearing contracts. `world-state` and
+`evidence-set` are recorded as a summary plus digest (`COMPACT_PAYLOAD_SCHEMAS`): their content is
+already in the trail as individual evidence and execution events, and inlining hundreds of
+observations per iteration would bury the trail rather than improve it.
 
 ---
 
