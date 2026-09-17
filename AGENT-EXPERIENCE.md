@@ -844,24 +844,29 @@ failing build.
 ### Environment Constraints (confirmed, not assumed)
 - The dev sandbox cannot run any wireless verification: monolithic kernel, no wireless stack,
   `mac80211_hwsim` impossible. CI is the only path.
-- **The sandbox has a narrow egress allowlist: essentially PyPI and GitHub only.** Everything else
-  is blocked, and no tunnel to a user's machine can work regardless of provider. Reachable:
-  `pypi.org`, `files.pythonhosted.org`, `github.com`, `api.github.com`. Blocked with an identical
-  signature: `example.com`, `www.google.com`, `1.1.1.1`, `raw.githubusercontent.com`, and every
-  `*.ngrok-free.*` host.
-  - The blocked signature is: DNS resolves to a catch-all AWS pool (`13.56.217.111`, `184.72.44.51`,
-    ...), TCP connect *succeeds* because the sinkhole answers, then TLS is dropped at EOF
-    (`SSLZeroReturnError`, `curl` exit 35, `http_code=000`, zero bytes transferred).
-  - **Correction to an earlier note in this file**, which attributed this to `*.ngrok*` being
-    wildcard-sinkholed. That diagnosis was too narrow and was wrong in a way that matters: it
-    implied the problem was ngrok-specific and that a different domain or provider might work.
-    Testing `example.com` and `1.1.1.1` disproves that - they fail identically. The `.ngrok-free.dev`
-    vs `.ngrok-free.app` distinction is a red herring for the same reason.
-  - Diagnostic lesson: a wildcard DNS pool is the *symptom* of an egress block here, not evidence
-    about any one provider. Always compare against a neutral host before concluding a specific
-    service is at fault - otherwise the failure gets blamed on the user's setup instead of the
-    sandbox. `getaddrinfo` plus a deliberately impossible control subdomain distinguishes
-    wildcard-DNS from real resolution; `gethostbyname` does not (it returns one rotating IP).
+- **The sandbox enforces a destination allowlist at the transport layer: essentially PyPI and
+  GitHub only.** No tunnel to a user's machine can work, from any provider. Reachable:
+  `pypi.org`, `files.pythonhosted.org`, `github.com`, `api.github.com`. Blocked: `example.com`,
+  `www.google.com`, `httpbin.org`, `postman-echo.com`, `raw.githubusercontent.com`, `1.1.1.1`, and
+  every `*.ngrok-free.*` host.
+  - **The block is not DNS-based and not proxy-based.** There are no proxy environment variables,
+    `/etc/resolv.conf` points at `8.8.8.8`, external DNS queries succeed, and TCP connect to port
+    443 *and* port 80 succeeds for blocked hosts. What fails is the payload: `curl -w` shows
+    `time_appconnect=0.000000` and `bytes=0` for a blocked host versus `0.033s` and 27965 bytes for
+    `pypi.org` - the TLS handshake never even begins. Plain HTTP to a blocked host gives curl exit
+    52 (empty reply): the connection is accepted and then dropped.
+  - **Correction to two earlier wrong diagnoses recorded in this file.** The first blamed a
+    wildcard sinkhole on `*.ngrok*`; the second correctly identified an allowlist but still called
+    the DNS a "catch-all AWS pool" acting as a symptom of the block. Both were wrong about the DNS.
+    `*.ngrok-free.dev` is wildcarded *by ngrok itself* - an impossible subdomain returns the same
+    six answers - and those addresses are genuine ngrok edge hosts
+    (`ec2-13-56-217-111.us-west-1.compute.amazonaws.com`); ngrok runs on AWS. Identical A records
+    across subdomains are normal for a wildcarded service and are **not** evidence of interception.
+  - Diagnostic lesson: do not infer a network block from DNS behaviour. Resolve, then measure where
+    the connection actually dies - `curl -w '%{time_appconnect} %{size_download} %{http_code}'`
+    against an allowlisted and a non-allowlisted host distinguishes a DNS problem, a TCP problem and
+    a payload filter in one shot. Two consecutive plausible-but-wrong explanations here both came
+    from reasoning about DNS instead of measuring the handshake.
   - Note the direction that *does* work: the sandbox can serve a preview that the user's browser
     reaches (`https://{port}-{sandboxId}.e2b.app`). It cannot dial out to the user. Results from a
     user's own hardware have to travel back via chat paste or via GitHub, which is reachable.
