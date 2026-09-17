@@ -307,11 +307,17 @@ def check_channel(im, iface: str, report: Report) -> None:
     if not supported:
         # Distinguish "the parser missed them" from "iw list produced nothing".
         rc, out, err = sh(["iw", "list"])
-        sample = " | ".join((out or err).splitlines()[:6])
+        lines = (out or err).splitlines()
+        head = " | ".join(lines[:4])
+        mhz = " | ".join(l.strip() for l in lines if "MHz" in l)[:12]
+        freq_hdr = [l.strip() for l in lines if "Frequenc" in l][:3]
+        iface_hdr = [l.strip() for l in lines if "Interface" in l][:4]
         annotate(
             "error",
             "iw-list-diagnostic",
-            f"get_supported_channels returned [] ; iw list rc={rc} first lines: {sample[:600]}",
+            f"get_supported_channels({iface}) returned []; iw list rc={rc}; "
+            f"head=[{head[:200]}]; frequency_headers={freq_hdr}; "
+            f"interface_lines={iface_hdr}; first_MHz_lines=[{mhz[:400]}]",
         )
 
     # Channels 1, 6 and 11 are always valid 2.4 GHz; hwsim supports them.

@@ -381,6 +381,57 @@ def test_phy_block_match_is_not_a_substring_of_another_name():
     assert "phy#1" in block and "phy#0" not in block, "wlan1 matched the wlan10 block"
 
 
+# Current iw releases open each block with "Wiphy phy0"; older ones with "phy#0".
+# CI showed the modern format, which the original split did not recognise.
+IW_LIST_WIPHY_FORMAT = """Wiphy phy0
+\twiphy index: 0
+\tmax # scan SSIDs: 4
+\tInterfaces:
+\t\tInterface wlan0
+\t\t\tifindex 3
+\t\t\ttype managed
+\tFrequencies:
+\t\t* 2412 MHz [1] (20.0 dBm)
+\t\t* 2437 MHz [6] (20.0 dBm)
+\t\t* 2472 MHz [13] (disabled)
+Wiphy phy1
+\twiphy index: 1
+\tmax # scan SSIDs: 4
+\tInterfaces:
+\t\tInterface wlan1
+\t\t\tifindex 4
+\t\t\ttype managed
+\tFrequencies:
+\t\t* 5180 MHz [36] (20.0 dBm)
+\t\t* 5745 MHz [149] (20.0 dBm)
+"""
+
+
+def test_phy_block_handles_modern_wiphy_header():
+    block = InterfaceManager._phy_block_for(IW_LIST_WIPHY_FORMAT, "wlan1")
+
+    assert "Wiphy phy1" in block
+    assert "Wiphy phy0" not in block
+
+
+def test_phy_block_still_handles_legacy_phy_hash_header():
+    block = InterfaceManager._phy_block_for(IW_LIST_TWO_PHYS, "wlan1")
+
+    assert "phy#1" in block and "phy#0" not in block
+
+
+@pytest.mark.parametrize(
+    "iface,expected",
+    [("wlan0", [1, 6]), ("wlan1", [36, 149])],
+)
+def test_supported_channels_with_modern_wiphy_format(monkeypatch, iface, expected):
+    """Regression: the CI runner emits 'Wiphy phyN', and channels came back empty."""
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_WIPHY_FORMAT)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert im.get_supported_channels(iface) == expected
+
+
 def test_phy_block_falls_back_when_only_a_longer_name_exists():
     """No exact match for wlan1, so the documented fallback returns everything."""
     output = (

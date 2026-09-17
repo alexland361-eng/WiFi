@@ -308,14 +308,18 @@ class InterfaceManager:
 
         return sorted(channels)
 
-    @staticmethod
-    def _phy_block_for(iw_list_output: str, interface: str) -> str:
+    # `iw list` opens each radio's block with "Wiphy phy0" in current iw
+    # releases and with "phy#0" in older ones. Split on either.
+    _PHY_HEADER = re.compile(r"(?m)^(?=Wiphy\s+phy|phy#)")
+
+    @classmethod
+    def _phy_block_for(cls, iw_list_output: str, interface: str) -> str:
         """Return the `iw list` block for the phy owning `interface`.
 
         Falls back to the whole output when the interface cannot be located, so
         a partial answer is still returned rather than nothing.
         """
-        blocks = re.split(r"(?m)^(?=phy#)", iw_list_output)
+        blocks = re.split(cls._PHY_HEADER, iw_list_output)
         for block in blocks:
             if re.search(rf"(?m)^\s*Interface\s+{re.escape(interface)}\s*$", block):
                 return block
