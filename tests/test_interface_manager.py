@@ -590,3 +590,84 @@ def test_supported_channels_falls_back_to_all_phys_when_phy_unresolvable(monkeyp
     im = InterfaceManager(ToolManager(CapabilityRegistry()))
 
     assert im.get_supported_channels("wlan1mon") == [1, 6, 36, 149]
+
+
+# Verbatim from the CI runner (kernel 6.17 with current iw). Frequencies carry a
+# decimal place, which the original integer-only regex silently failed to match -
+# synthetic fixtures using the older "* 2412 MHz [1]" form passed while the real
+# radio returned no channels at all.
+IW_LIST_DECIMAL_FREQUENCIES = """Wiphy phy1
+\twiphy index: 1
+\tmax # scan SSIDs: 4
+\tmax scan IEs length: 2114 bytes
+\tFrequencies:
+\t\t* 2412.0 MHz [1] (20.0 dBm)
+\t\t* 2417.0 MHz [2] (20.0 dBm)
+\t\t* 2422.0 MHz [3] (20.0 dBm)
+\t\t* 2427.0 MHz [4] (20.0 dBm)
+\t\t* 2432.0 MHz [5] (20.0 dBm)
+\t\t* 2437.0 MHz [6] (20.0 dBm)
+\t\t* 2484.0 MHz [14] (disabled)
+\t\t* 5180.0 MHz [36] (20.0 dBm) (no IR)
+"""
+
+
+def test_decimal_frequency_format_is_parsed(monkeypatch):
+    """Regression: real iw emits '* 2412.0 MHz [1]', not '* 2412 MHz [1]'."""
+    monkeypatch.setattr(
+        imod.os, "readlink", lambda path: "../../ieee80211/phy1"
+    )
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_DECIMAL_FREQUENCIES)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    channels = im.get_supported_channels("wlan1mon")
+
+    assert channels == [1, 2, 3, 4, 5, 6, 36]
+
+
+def test_disabled_channel_excluded_in_decimal_format(monkeypatch):
+    monkeypatch.setattr(imod.os, "readlink", lambda path: "../../ieee80211/phy1")
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_DECIMAL_FREQUENCIES)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert 14 not in im.get_supported_channels("wlan1mon")
+
+
+def test_passive_no_ir_channel_is_still_listed(monkeypatch):
+    """'(no IR)' forbids initiating radiation, not capture, so it stays usable."""
+    monkeypatch.setattr(imod.os, "readlink", lambda path: "../../ieee80211/phy1")
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_DECIMAL_FREQUENCIES)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert 36 in im.get_supported_channels("wlan1mon")
+
+
+def test_six_ghz_half_channel_spacing_is_parsed(monkeypatch):
+    """6 GHz channels sit on .0 and half-channel offsets; both must parse."""
+    output = (
+        "Wiphy phy0\n"
+        "\tFrequencies:\n"
+        "\t\t* 5955.0 MHz [2] (23.0 dBm)\n"
+        "\t\t* 5975.0 MHz [6] (23.0 dBm)\n"
+        "\t\t* 6115.0 MHz [34] (23.0 dBm) (no IR)\n"
+    )
+    monkeypatch.setattr(imod.os, "readlink", lambda path: "../../ieee80211/phy0")
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, output)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert im.get_supported_channels("wlan0") == [2, 6, 34]
+
+
+def test_integer_and_decimal_formats_both_parse(monkeypatch):
+    """Older and current iw output must both work, including within one block."""
+    output = (
+        "Wiphy phy0\n"
+        "\tFrequencies:\n"
+        "\t\t* 2412 MHz [1] (20.0 dBm)\n"
+        "\t\t* 2437.0 MHz [6] (20.0 dBm)\n"
+    )
+    monkeypatch.setattr(imod.os, "readlink", lambda path: "../../ieee80211/phy0")
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, output)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert im.get_supported_channels("wlan0") == [1, 6]

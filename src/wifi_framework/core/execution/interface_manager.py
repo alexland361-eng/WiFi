@@ -291,15 +291,19 @@ class InterfaceManager:
             phy = self._phy_name_for_interface(interface)
             block = self._phy_block_for(stdout, interface, phy)
             for line in block.splitlines():
-                # Example: * 2412 MHz [1] (20.0 dBm)
-                #          * 5745 MHz [149] (disabled)
-                m = re.search(r"\*\s+(\d+)\s+MHz\s+\[(\d+)\]", line)
+                # Current iw prints the frequency with a decimal place, needed
+                # for 6 GHz half-channel spacing; older releases print an
+                # integer. Accept both.
+                #   * 2412.0 MHz [1] (20.0 dBm)
+                #   * 2412 MHz [1] (20.0 dBm)
+                #   * 5745.0 MHz [149] (disabled)
+                m = re.search(r"\*\s+\d+(?:\.\d+)?\s+MHz\s+\[(\d+)\]", line)
                 if not m:
                     continue
                 if "disabled" in line:
                     continue
                 try:
-                    ch = int(m.group(2))
+                    ch = int(m.group(1))
                 except ValueError:
                     continue
                 if ch not in channels:
