@@ -62,18 +62,54 @@ jobs:
 
       # mac80211_hwsim lives in linux-modules-extra on Ubuntu. Try the load
       # first (runner images sometimes ship it), then install and retry.
+      # Diagnostics are emitted as annotations because job logs live in blob
+      # storage that is not always reachable from the environment reading them.
       - name: Load mac80211_hwsim
         run: |
-          set -x
-          if sudo modprobe mac80211_hwsim radios=2 2>/dev/null; then
+          KREL=$(uname -r)
+          echo "kernel release: $KREL"
+
+          CFG="/boot/config-$KREL"
+          if [ -r "$CFG" ]; then
+            for opt in CONFIG_MODULES CONFIG_WIRELESS CONFIG_CFG80211 CONFIG_MAC80211 CONFIG_MAC80211_HWSIM; do
+              line=$(grep -E "^(${opt}=|# ${opt} )" "$CFG" || echo "${opt} absent from config")
+              echo "  $line"
+              echo "::notice title=kernel-config::${line}"
+            done
+          else
+            echo "  no kernel config at $CFG"
+            echo "::notice title=kernel-config::no /boot/config-$KREL on runner"
+          fi
+
+          attempt() {
+            echo "--- modprobe attempt: $*"
+            if out=$(sudo modprobe "$@" 2>&1); then
+              echo "  SUCCESS"
+              return 0
+            fi
+            echo "  FAILED: $out"
+            echo "::error title=modprobe-failed::$out"
+            LAST_ERR="$out"
+            return 1
+          }
+
+          if attempt mac80211_hwsim radios=2; then
             echo "loaded on first attempt"
           else
-            echo "first attempt failed; installing linux-modules-extra-$(uname -r)"
-            sudo apt-get install -y "linux-modules-extra-$(uname -r)" || \
-              sudo apt-get install -y linux-modules-extra-generic || true
-            sudo modprobe mac80211_hwsim radios=2
+            echo "installing module package for $KREL"
+            sudo apt-get install -y "linux-modules-extra-$KREL" 2>&1 | tail -5 || true
+            sudo apt-get install -y linux-modules-extra-generic 2>&1 | tail -5 || true
+            sudo depmod -a "$KREL" || true
+            echo "searching for the module file:"
+            find /lib/modules -name 'mac80211_hwsim*' 2>/dev/null | head -5 || echo "  (none found)"
+            attempt mac80211_hwsim radios=2 || {
+              echo "::error title=hwsim-unavailable::mac80211_hwsim could not be loaded on kernel $KREL: ${LAST_ERR}"
+              exit 1
+            }
           fi
-          lsmod | grep -E 'hwsim|mac80211|cfg80211'
+
+          lsmod | grep -E 'hwsim|mac80211|cfg80211' || echo "WARNING: modules not visible in lsmod"
+
 
       - name: Confirm virtual radios exist
         run: |
