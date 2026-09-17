@@ -15,7 +15,6 @@ import os
 import stat
 import subprocess
 
-import pytest
 
 from wifi_framework.utils.system import (
     describe_unresolved,

@@ -28,14 +28,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ...contracts.common import ArtifactRef, ParserRef, Provenance, EntityRef, TargetType
-from ...contracts.envelope import EngineId, format_timestamp, utc_now
+from ...contracts.common import ParserRef, Provenance, EntityRef, TargetType
+from ...contracts.envelope import EngineId, format_timestamp
 from ...contracts.evidence import EvidenceSet, Observation, ObservationType
 from ...contracts.execution import ExecutionResult, ExecutionStatus
 from ...contracts.verification import (
     Claim,
     ClaimType,
-    VerificationMethod,
     VerificationRequest,
     VerificationRequirement,
 )

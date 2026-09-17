@@ -5,8 +5,8 @@ from wifi_framework.core.execution.registry import CapabilityRegistry
 from wifi_framework.core.execution.executor import CapabilityExecutor
 from wifi_framework.core.models.capability import ToolCapabilityMetadata, CapabilityCategory, CapabilityRequirements, OperatingSystem, OperationalProperties, OperationalMode
 from wifi_framework.core.execution.adapter_base import ToolAdapterBase
-from typing import List, Dict, Any
-from wifi_framework.core.models.evidence import Evidence, EvidenceType, ConfidenceLevel
+from typing import List
+from wifi_framework.core.models.evidence import Evidence, EvidenceType
 
 
 class EchoAdapter(ToolAdapterBase):

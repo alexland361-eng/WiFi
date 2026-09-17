@@ -9,7 +9,6 @@ the trail still says what ran.
 from __future__ import annotations
 
 import json
-import os
 import re
 
 import pytest
@@ -417,7 +416,6 @@ def test_a_contract_payload_is_filtered_when_it_is_recorded(tmp_path):
 def test_the_saved_report_is_filtered(tmp_path):
     """The report inlines `raw_command` for every evidence item and every finding
     trace, and is the artefact most likely to leave the machine it was made on."""
-    from datetime import datetime, timezone
 
     from wifi_framework.core.models.assessment_state import AssessmentState, ExecutionRecord
     from wifi_framework.core.models.scope import AssessmentScope

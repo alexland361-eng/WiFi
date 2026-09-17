@@ -26,7 +26,7 @@ from ...contracts.action import ActionObjective, ActionOrigin, ActionReason, Act
 from ...contracts.ai import DecisionProposal, PlanningContext
 from ...contracts.common import EntityRef, TargetType
 from ...contracts.envelope import EngineId
-from ...contracts.world_state import CapabilityState, UncertaintyRef, WorldState
+from ...contracts.world_state import CapabilityState, WorldState
 from ..planning.action_selector import UNCERTAINTY_OUTPUT_MAP
 from ..planning.planner import AssessmentPlanner
 from .state_view import ContractRegistryView, WorldStateView

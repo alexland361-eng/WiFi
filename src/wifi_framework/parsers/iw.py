@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceSource, EvidenceType
+from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
 
 
 def parse_iw_dev(output: str) -> List[Dict[str, Any]]:
@@ -169,7 +169,7 @@ def iw_dev_to_evidences(output: str, interface: str = None, execution_id: str = 
             interface=iface.get("name"),
             confidence=ConfidenceLevel.HIGH,
             execution_id=execution_id,
-            raw_command=f"iw dev",
+            raw_command="iw dev",
         )
         evidences.append(ev)
     return evidences

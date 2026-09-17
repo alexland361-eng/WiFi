@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from .action import ActionObjective, ActionOrigin, ActionReason, ActionRequest
 from .base import BaseContract
-from .common import EntityRef, TargetType, to_jsonable
+from .common import EntityRef, TargetType
 from .envelope import EngineId
 from .validation import (
     ValidationIssue,

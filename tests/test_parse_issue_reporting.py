@@ -18,11 +18,9 @@ because a parser with nowhere to report is the defect, not the `except` clause.
 """
 from __future__ import annotations
 
-import pytest
 
 from wifi_framework.contracts.common import InterfaceRef, ToolRef
 from wifi_framework.contracts.execution import ExecutionResult, ExecutionStatus
-from wifi_framework.contracts.envelope import EngineId
 from wifi_framework.core.evidence import EvidenceEngine
 from wifi_framework.core.models.assessment_state import AssessmentState
 from wifi_framework.core.models.evidence import EvidenceType

@@ -5,8 +5,6 @@ Kismet is treated as long-running observation source rather than one-shot scanne
 """
 from __future__ import annotations
 
-import json
-import time
 from typing import Any, Dict, List
 
 from ....core.execution.adapter_base import ToolAdapterBase

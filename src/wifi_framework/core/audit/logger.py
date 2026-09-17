@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List
 
 from ..models.assessment_state import AssessmentState, ExecutionRecord
 from ..models.evidence import Evidence
@@ -340,10 +340,7 @@ class AuditLogger:
         if report_redaction.applied:
             report["redaction"] = report_redaction.to_dict()
 
-        try:
-            with open(output_path, "w") as f:
-                json.dump(report, f, indent=2)
-        except OSError as e:
-            raise
+        with open(output_path, "w") as f:
+            json.dump(report, f, indent=2)
 
         return output_path

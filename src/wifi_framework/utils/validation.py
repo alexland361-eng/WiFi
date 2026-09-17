@@ -4,7 +4,7 @@ Validation utilities for tool parameters and inputs.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 #: The three exact spellings of a MAC address that this framework accepts.
@@ -137,7 +137,7 @@ def validate_cidr(cidr: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def validate_parameters(params: Dict[str, Any], required: List[str], validators: Dict[str, callable] = None) -> Tuple[bool, List[str]]:
+def validate_parameters(params: Dict[str, Any], required: List[str], validators: Optional[Dict[str, Callable[[Any], Tuple[bool, str]]]] = None) -> Tuple[bool, List[str]]:
     """
     Validate parameters dict against required list and custom validators.
 

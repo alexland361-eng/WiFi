@@ -50,7 +50,7 @@ def test_action_selector_scoring():
     )
 
     from wifi_framework.core.execution.adapter_base import ToolAdapterBase
-    from typing import List, Dict, Any
+    from typing import List
     from wifi_framework.core.models.evidence import Evidence
 
     class DummyAdapter(ToolAdapterBase):

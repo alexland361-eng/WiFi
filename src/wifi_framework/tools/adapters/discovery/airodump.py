@@ -18,7 +18,7 @@ from ....core.models.capability import (
     ToolCapabilityMetadata,
 )
 from ....core.models.evidence import Evidence
-from ....parsers.airodump import airodump_to_evidences, parse_airodump_csv
+from ....parsers.airodump import airodump_to_evidences
 
 
 class AirodumpNgAdapter(ToolAdapterBase):

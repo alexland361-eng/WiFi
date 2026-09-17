@@ -15,7 +15,6 @@ Security rationale for the parameter rules (guideline 15):
 """
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple

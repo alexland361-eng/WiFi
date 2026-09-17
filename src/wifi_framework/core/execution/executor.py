@@ -6,12 +6,10 @@ All as first-class parts of execution system.
 """
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List, Optional
 
 from ..models.assessment_state import AssessmentState, ExecutionRecord
 from ..models.evidence import Evidence
-from .adapter_base import ToolAdapterBase
 from .registry import CapabilityRegistry
 
 

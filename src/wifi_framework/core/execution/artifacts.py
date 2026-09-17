@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from ...contracts.common import ArtifactRef
 from ...contracts.envelope import format_timestamp
+from ...utils.system import OWNER_ONLY_FILE_MODE, ensure_private_dir, tighten_file_mode
 
 #: Default per-artifact cap. 32 MiB comfortably holds verbose tool output and text captures
 #: while preventing a runaway ``airodump-ng``/``tshark`` run from filling the disk.
@@ -78,9 +79,6 @@ class ArtifactStoreStats:
             "permission_failure_count": self.permission_failure_count,
             "missing_count": self.missing_count,
         }
-
-
-from ...utils.system import OWNER_ONLY_FILE_MODE, ensure_private_dir, tighten_file_mode
 
 
 class ArtifactStore:

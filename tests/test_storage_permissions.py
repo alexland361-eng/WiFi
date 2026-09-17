@@ -13,7 +13,6 @@ silently reused.
 """
 import os
 import stat
-import tempfile
 from unittest import mock
 
 import pytest

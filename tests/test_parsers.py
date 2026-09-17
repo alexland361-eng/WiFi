@@ -1,6 +1,12 @@
 """Tests for parsers."""
+import pytest
+
 from wifi_framework.parsers.iw import parse_iw_dev, parse_iw_list
-from wifi_framework.parsers.airodump import parse_airodump_csv
+from wifi_framework.parsers.airodump import (
+    airodump_to_evidences,
+    parse_airodump_csv,
+    parse_airodump_text,
+)
 from wifi_framework.parsers.wash import parse_wash
 from wifi_framework.parsers.nmap import parse_nmap_grepable, parse_nmap_normal
 
@@ -136,14 +142,6 @@ PORT    STATE SERVICE VERSION
 # back to screen output. That fallback used to loop over every line computing a MAC
 # regex and then `pass`, so it always returned two empty lists - and an assessment that
 # failed to read a busy capture recorded "no access points observed".
-
-import pytest
-
-from wifi_framework.parsers.airodump import (
-    airodump_to_evidences,
-    parse_airodump_csv,
-    parse_airodump_text,
-)
 
 #: Modern layout: `PWR RXQ`, the two-column signal field newer airodump-ng prints.
 SCREEN_MODERN = """ CH  11 ][ Elapsed: 1 min ][ 2026-09-17 10:23 ][ Pseudo random frequency: 2.4.2

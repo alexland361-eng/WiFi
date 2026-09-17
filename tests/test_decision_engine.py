@@ -18,7 +18,6 @@ from wifi_framework.contracts import (
     ActionOrigin,
     ActionRequest,
     CapabilityState,
-    Claim,
     DecisionProposal,
     EngineId,
     EntityRef,

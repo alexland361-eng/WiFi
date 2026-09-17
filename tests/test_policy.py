@@ -23,6 +23,7 @@ from wifi_framework.core.models.assessment_state import AssessmentState, Interfa
 from wifi_framework.core.models.scope import AssessmentScope
 from wifi_framework.core.policy import ActionPolicy, ParameterRule, PARAMETER_RULES
 from wifi_framework.tools.registry_loader import load_all_adapters
+from wifi_framework.utils.validation import validate_channel
 
 IN_SCOPE_BSSID = "AA:BB:CC:DD:EE:FF"
 OUT_OF_SCOPE_BSSID = "11:22:33:44:55:66"
@@ -558,7 +559,6 @@ def test_parameter_rule_families_are_declared():
 # Both sides use int() and catch (TypeError, ValueError), so the sets match by
 # construction. These tests pin the construction rather than trusting it.
 
-from wifi_framework.utils.validation import validate_channel
 
 MALFORMED_CHANNELS = ["9.0", "0x9", "6abc", "abc", "", "  ", None, [9], {"channel": 9}, (9,), object()]
 

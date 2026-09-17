@@ -65,7 +65,7 @@ class ActionSelector:
         required_caps = uncertainty.get("required_capabilities", [])
         if capability.name in required_caps:
             score += 10.0
-            reasons.append(f"Directly addresses uncertainty (in required list)")
+            reasons.append("Directly addresses uncertainty (in required list)")
 
         # Check outputs vs uncertainty type
         uncertainty_type = uncertainty.get("type", "")

@@ -11,17 +11,15 @@ been established through another observation.
 from __future__ import annotations
 
 import os
-import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 from ...contracts.action import ActionObjective, ActionOrigin, ActionReason, ActionRequest
 from ...contracts.common import EntityRef, TargetType
 from ...contracts.envelope import EngineId
-from ...contracts.evidence import EvidenceSet
 from ...contracts.execution import ExecutionFailure, ExecutionResult as ExecutionResultContract
 from ...contracts.execution import ExecutionStatus, FailureCategory
-from ...contracts.verification import VerificationRequest, VerificationResult, VerificationStatus
+from ...contracts.verification import VerificationRequest, VerificationStatus
 from ...contracts.world_state import WorldState
 from ..models.assessment_state import AssessmentState, AssessmentPhase, ExecutionRecord, InterfaceInfo
 from ..models.scope import AssessmentScope, ScopeEnforcer
@@ -33,10 +31,10 @@ from ..execution.tool_manager import ToolManager
 from ..execution.interface_manager import InterfaceManager
 from ..execution.dependency_resolver import DependencyResolver
 from ..execution.artifacts import ArtifactStore
-from ..execution.gateway import ExecutionGateway, ExecutionOutcome, PreparedAction
+from ..execution.gateway import ExecutionGateway, ExecutionOutcome
 from ..decision.engine import DecisionEngine
 from ..policy.validator import ActionPolicy
-from ..evidence.engine import EvidenceEngine, EvidenceProcessingResult
+from ..evidence.engine import EvidenceEngine
 from ..verification.engine import VerificationEngine, VerificationOutcome
 from ..world.applier import WorldModelApplier
 from ..world.state_publisher import WorldStatePublisher, uncertainty_id
@@ -44,7 +42,7 @@ from ..experience.engine import ExperienceEngine
 from ..planning.planner import AssessmentPlanner
 from ..audit.logger import AuditLogger
 from ..experience.store import ExperienceStore
-from ...utils.system import get_interface_list, get_os_info
+from ...utils.system import get_interface_list
 from ...tools.registry_loader import load_all_adapters
 
 #: How often (in loop iterations) open findings are re-examined by the Verification Engine.
@@ -1045,7 +1043,7 @@ class AssessmentEngine:
         self.audit_logger.log_state_transition(self.state.phase.value, "reporting", "Loop completed")
 
         report_path = self.audit_logger.save_report(self.state)
-        print(f"\n[=== Assessment Completed ===]")
+        print("\n[=== Assessment Completed ===]")
         print(f"Report saved to: {report_path}")
         print(f"Artifacts: {self.artifact_store.stats().to_dict()}")
         print(f"Summary: {self.state.summary()}")

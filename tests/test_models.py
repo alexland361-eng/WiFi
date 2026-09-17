@@ -1,11 +1,10 @@
 """Tests for core models."""
 import pytest
-from datetime import datetime, timezone
 
-from wifi_framework.core.models.evidence import Evidence, EvidenceType, EvidenceSource, ConfidenceLevel
+from wifi_framework.core.models.evidence import Evidence, EvidenceType, ConfidenceLevel
 from wifi_framework.core.models.finding import Finding, FindingStatus, FindingCategory, FindingSeverity
 from wifi_framework.core.models.scope import AssessmentScope
-from wifi_framework.core.models.world_model import WorldModel, AccessPoint
+from wifi_framework.core.models.world_model import WorldModel
 
 
 def test_evidence_creation():

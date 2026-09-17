@@ -30,7 +30,6 @@ from ...utils.system import (
     is_root,
     run_command,
 )
-from ..models.capability import ToolCapabilityMetadata
 from .registry import CapabilityRegistry
 
 

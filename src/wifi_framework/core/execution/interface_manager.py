@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import os
 import re
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ...utils.system import check_interface_exists, effective_capabilities, run_command
 from ...utils.validation import validate_mac, normalize_mac

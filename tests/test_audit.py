@@ -18,9 +18,6 @@ from wifi_framework.contracts import (
     SCHEMA_VERSIONS,
     ActionObjective,
     ActionRequest,
-    ArtifactRef,
-    Claim,
-    ClaimType,
     EngineId,
     EntityRef,
     EvidenceSet,
@@ -407,7 +404,6 @@ def test_report_is_json_serialisable_and_saveable(logger, tmp_path):
 
 
 def test_audit_log_is_append_only_jsonl(logger):
-    state = chain_state()
     logger.log_contract(
         ActionRequest(
             assessment_id=ASSESSMENT,

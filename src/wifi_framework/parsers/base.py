@@ -4,7 +4,7 @@ Base parser utilities.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Dict, List
 
 
 def extract_macs(text: str) -> List[str]:

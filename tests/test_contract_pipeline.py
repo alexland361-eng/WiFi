@@ -717,7 +717,7 @@ def test_recorded_command_falls_back_for_results_predating_argv():
 
 def test_execute_populates_argv_with_the_vector_it_actually_ran():
     """`argv` must be the list handed to subprocess, not a reconstruction."""
-    from wifi_framework.core.execution.adapter_base import AdapterExecutionResult, ToolAdapterBase
+    from wifi_framework.core.execution.adapter_base import ToolAdapterBase
     from wifi_framework.core.models.capability import (
         CapabilityRequirements,
         OperatingSystem,

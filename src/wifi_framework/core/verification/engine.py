@@ -37,9 +37,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ...contracts.action import ActionObjective, ActionRequest
+from ...contracts.action import ActionRequest
 from ...contracts.common import EntityRef, TargetType
 from ...contracts.envelope import EngineId, format_timestamp, utc_now
 from ...contracts.evidence import ObservationType
@@ -346,13 +346,9 @@ class VerificationEngine:
         claim_type = CATEGORY_CLAIMS.get(category, ClaimType.SECURITY_FINDING)
         subject_id = (finding.affected_assets or [None])[0]
         required_confidence = self._required_confidence_for(finding, claim_type)
-        tools = sorted(
-            {
-                evidence.source.tool_name
-                for evidence in state.evidences
-                if evidence.id in (finding.evidence_ids or [])
-            }
-        )
+        # The distinct tools behind a finding are not carried on the request: nothing in
+        # VerificationRequest takes a tool list, and ``min_independent_sources`` is a
+        # count the verifier computes from the evidence it gathers itself.
         return VerificationRequest(
             assessment_id=state.id,
             source_engine=EngineId.WORLD_MODEL.value,

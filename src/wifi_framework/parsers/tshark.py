@@ -4,7 +4,6 @@ Parser for tshark output.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType

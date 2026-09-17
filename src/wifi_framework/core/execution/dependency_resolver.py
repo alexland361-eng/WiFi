@@ -7,7 +7,7 @@ Deep research: Tools have dependencies (e.g., airmon-ng needs iw, hashcat needs 
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
 from .registry import CapabilityRegistry

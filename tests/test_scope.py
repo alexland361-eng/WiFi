@@ -1,4 +1,10 @@
 """Tests for scope enforcement."""
+import json
+import os
+
+import pytest
+
+from wifi_framework.core.audit.logger import AuditLogger
 from wifi_framework.core.models.scope import AssessmentScope, ScopeEnforcer
 
 
@@ -89,6 +95,21 @@ def test_scope_enforcer_strict():
     scope = AssessmentScope(authorized_ssids=["MyNetwork"], strict_mode=True)
     enforcer = ScopeEnforcer(scope)
 
+    # strict_mode alone does not stop passive observation of an unauthorized SSID:
+    # broadcast discovery is still allowed, so the radio environment stays visible and
+    # only *acting* on an unauthorized asset is refused. Without this assertion the
+    # enforcer above was constructed and never checked, and the two flags below would
+    # pass a test that only ever exercised one of them.
+    allowed, _reason = enforcer.check_wireless_action_allowed(
+        "Other", "AA:BB:CC:DD:EE:FF", invasive=False
+    )
+    assert allowed
+
+    refused, _reason = enforcer.check_wireless_action_allowed(
+        "Other", "AA:BB:CC:DD:EE:FF", invasive=True
+    )
+    assert not refused
+
     # In strict mode, even passive with unauthorized should be blocked if allow_broadcast_discovery False
     scope2 = AssessmentScope(authorized_ssids=["MyNetwork"], strict_mode=True, allow_broadcast_discovery=False)
     enforcer2 = ScopeEnforcer(scope2)
@@ -104,13 +125,6 @@ def test_scope_enforcer_strict():
 # for a reason that looks like a scope violation rather than a typo. The direction is
 # fail-safe, so this is an auditability defect rather than a security hole - but the
 # trail must say what was dropped.
-
-import json
-import os
-
-import pytest
-
-from wifi_framework.core.audit.logger import AuditLogger
 
 
 def test_an_invalid_network_is_recorded_as_dropped():

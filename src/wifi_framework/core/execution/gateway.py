@@ -580,16 +580,16 @@ class ExecutionGateway:
     def _tool_ref(self, metadata: Any, implementation: str) -> ToolRef:
         version: Optional[str] = None
         path: Optional[str] = None
-        probe_error: Optional[str] = None
         if self.tool_manager is not None:
             try:
                 info = self.tool_manager.check_tool_deep(metadata.tool_binary)
                 version = info.version_raw
                 path = info.path
-            except Exception as exc:
-                # Tool metadata is descriptive; a probe failure must not abort the execution.
+            except Exception:
+                # Tool metadata is descriptive; a probe failure must not abort the
+                # execution, and ToolRef has no field to carry one, so the reason is
+                # dropped rather than kept in a variable nothing reads.
                 version = None
-                probe_error = f"{type(exc).__name__}: {exc}"
         if path is None:
             # The probe is cached and best-effort. ``ToolRef.path`` is what the audit
             # trail records as the binary that ran, so an unknown path here would

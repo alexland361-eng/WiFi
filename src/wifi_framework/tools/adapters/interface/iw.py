@@ -15,7 +15,7 @@ from ....core.models.capability import (
     ToolCapabilityMetadata,
 )
 from ....core.models.evidence import Evidence
-from ....parsers.iw import iw_dev_to_evidences, parse_iw_dev, parse_iw_list
+from ....parsers.iw import iw_dev_to_evidences, parse_iw_list
 
 
 class IwDevAdapter(ToolAdapterBase):

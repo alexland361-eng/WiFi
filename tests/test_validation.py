@@ -681,7 +681,7 @@ def test_a_supplied_interface_is_validated_even_when_the_capability_does_not_req
     ``src/`` uses ``shell=True``, so a ``;`` reaches the tool as a literal character,
     and ``ActionPolicy`` already validates ``interface`` before dispatch.
     """
-    from typing import Any, Dict, List
+    from typing import List
 
     from wifi_framework.core.execution.adapter_base import ToolAdapterBase
     from wifi_framework.core.models.capability import (

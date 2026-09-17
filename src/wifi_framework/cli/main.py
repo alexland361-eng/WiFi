@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from typing import List
 
 from ..core.models.scope import AssessmentScope
 from ..core.engine.assessment_engine import AssessmentEngine
 from ..core.execution.registry import get_global_registry
 from ..core.execution.tool_manager import ToolManager
-from ..core.execution.interface_manager import InterfaceManager
 from ..core.execution.dependency_resolver import DependencyResolver
 from ..tools.registry_loader import load_all_adapters
 from ..core.audit.logger import AuditLogger
@@ -201,7 +198,6 @@ def cmd_list_capabilities(registry, interface: str = None):
     print("=== Registered Capabilities (Deep Management) ===")
 
     tool_manager = ToolManager(registry)
-    interface_manager = InterfaceManager(tool_manager)
     dependency_resolver = DependencyResolver(registry)
 
     # Show deep tool info
@@ -220,14 +216,14 @@ def cmd_list_capabilities(registry, interface: str = None):
         print(f"  {iface_name}: exists={cap.exists} up={cap.is_up} driver={cap.driver} monitor={cap.supports_monitor} injection={cap.supports_injection} mac={cap.mac}")
 
     # Show tool chains
-    print(f"\nTool Chains Feasibility:")
+    print("\nTool Chains Feasibility:")
     for objective in ["handshake_capture", "wps_assessment", "wireless_discovery", "network_discovery", "service_enumeration", "vulnerability_assessment", "interface_setup"]:
         chain = tool_manager.get_tool_chain(objective)
         feasible, missing, reasons = dependency_resolver.check_tool_chain_feasibility(chain, interface)
         status = "FEASIBLE" if feasible else f"PARTIAL missing={missing}"
         print(f"  {objective}: {chain} -> {status}")
 
-    print(f"\n=== Detailed Capability List ===")
+    print("\n=== Detailed Capability List ===")
     for name in sorted(registry.list_capabilities()):
         meta = registry.get_metadata(name)
         # Use deep check

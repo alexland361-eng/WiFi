@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
-from ..models.evidence import Evidence, EvidenceType
+from ..models.evidence import Evidence
 from ...utils.system import (
     check_interface_exists,
     check_tool_available,
@@ -26,7 +26,10 @@ from ...utils.system import (
     run_command,
     satisfies_privileges,
 )
-from ...utils.validation import validate_interface, validate_parameters
+from ...utils.validation import validate_interface
+# Aliased: the method below has the same name as the module-level helper, and a bare
+# call would resolve to the import rather than reading as a recursive call.
+from ...utils.validation import validate_parameters as check_declared_inputs
 
 
 class AdapterExecutionResult:
@@ -154,17 +157,52 @@ class ToolAdapterBase(ABC):
         """Override for adapter-specific checks."""
         return True, ""
 
-    def validate_parameters(self, parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
-        """Validate input parameters."""
-        # Check required inputs from metadata
-        required = [inp for inp in self.metadata.inputs if not inp.startswith("optional_")]
-        # Allow subclass to define required
-        return self.custom_parameter_validation(parameters)
+    def validate_parameters(
+        self, parameters: Dict[str, Any], interface: Optional[str] = None
+    ) -> Tuple[bool, List[str]]:
+        """Validate input parameters against the capability's declared inputs.
+
+        This computed the required list and then discarded it, delegating to
+        :meth:`custom_parameter_validation`, whose default accepts everything - so a
+        method named ``validate_parameters`` validated nothing. An adapter invoked
+        without an input it cannot work without went on to build a command line missing
+        that argument, and the tool's own complaint about it arrived as a runtime
+        failure rather than a refusal that names the missing input.
+
+        ``interface`` is an argument to :meth:`execute` rather than a key in
+        ``parameters``, so a capability declaring it mandatory is satisfied by either.
+        Checking ``parameters`` alone would refuse every normal invocation of the 30
+        capabilities that declare an interface, which is why the unused variable was
+        never wired up naively.
+
+        Every declared non-optional input is read by its own adapter under the same
+        name, verified by walking all 58 adapters' ``build_command`` sources against
+        their declared inputs, so enforcing presence cannot reject a parameter the
+        adapter knows by another name.
+        """
+        declared = list(getattr(self.metadata, "inputs", None) or [])
+        required = [name for name in declared if not name.startswith("optional_")]
+
+        supplied = dict(parameters)
+        if interface is not None and "interface" not in supplied:
+            supplied["interface"] = interface
+
+        present, errors = check_declared_inputs(supplied, required)
+        errors = list(errors)
+
+        custom_ok, custom_errors = self.custom_parameter_validation(parameters)
+        if not custom_ok:
+            errors.extend(custom_errors)
+
+        return (present and custom_ok), errors
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
-        """Override for custom validation. Default checks metadata inputs."""
-        # By default, ensure all metadata inputs that are required are present
-        # For flexibility, we don't enforce strictly here - subclass should override
+        """Override for adapter-specific checks beyond declared-input presence.
+
+        Required inputs are checked by :meth:`validate_parameters`; this hook is for
+        values - a channel range, a mutually exclusive pair of flags. The default
+        accepts everything, because an adapter that declares no constraints has none.
+        """
         return True, []
 
     @abstractmethod
@@ -199,7 +237,7 @@ class ToolAdapterBase(ABC):
         self.execution_id = str(uuid.uuid4())
 
         # Validate parameters
-        valid, errors = self.validate_parameters(parameters)
+        valid, errors = self.validate_parameters(parameters, interface)
         if not valid:
             return AdapterExecutionResult(
                 success=False,

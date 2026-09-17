@@ -14,18 +14,12 @@ import pytest
 
 from wifi_framework.contracts import (
     ArtifactRef,
-    Claim,
-    ClaimType,
     EngineId,
-    EntityRef,
     EvidenceSet,
-    ExecutionResult,
     ExecutionStatus,
     Observation,
     ParserRef,
     Provenance,
-    TargetType,
-    ToolRef,
     VerificationConclusion,
     VerificationMethod,
     VerificationResult,
@@ -45,7 +39,6 @@ from wifi_framework.core.models.finding import Finding, FindingCategory, Finding
 from wifi_framework.core.models.scope import AssessmentScope
 from wifi_framework.core.models.world_model import AccessPoint, NetworkHost, WirelessClient
 from wifi_framework.core.world import (
-    DEFAULT_STALENESS_SECONDS,
     WorldModelApplier,
     WorldStatePublisher,
     uncertainty_id,

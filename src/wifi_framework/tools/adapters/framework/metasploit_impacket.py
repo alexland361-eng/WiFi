@@ -220,7 +220,6 @@ class ResponderAdapter(ToolAdapterBase):
 
         # Parse captured hashes
         # Responder outputs like [SMB] NTLMv2-SSP ... or [HTTP] ...
-        import re
 
         for line in combined.splitlines():
             if "NTLM" in line or "Hash" in line or "[SMB]" in line or "[HTTP]" in line:
@@ -255,7 +254,7 @@ class OpenVASAdapter(ToolAdapterBase):
             if not parameters.get("allow_scan"):
                 return ["gvm-cli", "--help"]
 
-            cmd = ["gvm-cli", "socket", "--xml", f"<get_targets/>"]
+            cmd = ["gvm-cli", "socket", "--xml", "<get_targets/>"]
             return cmd
         else:
             return ["openvas", "--version"]

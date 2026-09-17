@@ -62,7 +62,7 @@ import shutil
 import subprocess
 import sys
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -427,8 +427,8 @@ def stage_inventory(report: Report) -> None:
     if rc == 0 and out.strip():
         for line in out.strip().splitlines():
             print(f"    {line}")
-        wifi_lines = [l for l in out.splitlines()
-                      if re.search(r"wireless|wi-?fi|802\.11|atheros|realtek|ralink|mediatek|broadcom|intel.*ac", l, re.I)]
+        wifi_lines = [entry for entry in out.splitlines()
+                      if re.search(r"wireless|wi-?fi|802\.11|atheros|realtek|ralink|mediatek|broadcom|intel.*ac", entry, re.I)]
         report.record("a USB Wi-Fi adapter is visible to lsusb", bool(wifi_lines),
                       "\n".join(wifi_lines) or "no wireless device matched; a PCIe radio would not appear here")
     else:
@@ -447,9 +447,9 @@ def stage_inventory(report: Report) -> None:
 
     rc, out, _ = sh(["lsmod"])
     if rc == 0:
-        wireless_mods = [l.split()[0] for l in out.splitlines()
+        wireless_mods = [entry.split()[0] for entry in out.splitlines()
                          if re.match(r"^(cfg80211|mac80211|mac80211_hwsim|ath9k\w*|ath\b|rt2800\w*|rt73usb|mt76\w*|"
-                                     r"rtl8\w+|iwlwifi|brcm\w+|lib80211)\b", l.split()[0] if l.split() else "")]
+                                     r"rtl8\w+|iwlwifi|brcm\w+|lib80211)\b", entry.split()[0] if entry.split() else "")]
         print(f"  loaded wireless modules: {sorted(set(wireless_mods)) or 'none'}")
         report.record("wireless kernel modules loaded", bool(wireless_mods), ", ".join(sorted(set(wireless_mods))))
 
@@ -668,9 +668,8 @@ def stage_contracts(report: Report) -> None:
         report.record("envelope module usable", False, f"{type(exc).__name__}: {exc}")
 
     try:
-        from wifi_framework.contracts.validation import validate_message  # type: ignore
         report.record("validation entry point importable", True, "")
-    except Exception as exc:
+    except Exception:
         try:
             from wifi_framework.contracts import validation as vmod
             report.record("validation module importable", True,
@@ -749,7 +748,7 @@ def stage_adapters(report: Report) -> None:
             os.remove(stale)
 
     instantiate_fail, no_metadata, argv_fail, hostile_ran, hostile_ok = [], [], [], [], 0
-    invasive_refused, invasive_total = 0, 0
+    invasive_total = 0
 
     for name in sorted(set(names)):
         try:
@@ -898,7 +897,7 @@ def stage_parsers(report: Report, ifaces: List[str]) -> None:
         report.record("parse_iw_dev finds every interface `iw dev` lists",
                       sorted(got) == sorted(expected) or len(parsed) == len(expected),
                       f"parser={got} independent={sorted(expected)}")
-        print(f"    raw `iw dev`:\n" + "".join(f"      | {l}\n" for l in out.strip().splitlines()[:12]))
+        print("    raw `iw dev`:\n" + "".join(f"      | {entry}\n" for entry in out.strip().splitlines()[:12]))
         ev = p_iw.iw_dev_to_evidences(out)
         report.record("iw_dev_to_evidences produces evidence", bool(ev), f"{len(ev)} evidence object(s)")
     else:
@@ -988,7 +987,8 @@ def stage_parsers(report: Report, ifaces: List[str]) -> None:
         rc, out, err = sh(["wash", "-i", scan_iface, "-C", "-t", str(SCAN_SECONDS)], timeout=SCAN_SECONDS + 20)
         if out.strip():
             parsed = p_w.parse_wash(out)
-            independent = [l for l in out.splitlines() if MAC_RE.search(l.split()[0] if l.split() else "")]
+            independent = [entry for entry in out.splitlines()
+                           if MAC_RE.search(entry.split()[0] if entry.split() else "")]
             print(f"    independent: {len(independent)} MAC-bearing rows; parser: {len(parsed)}")
             report.record("parse_wash row count matches independent count",
                           len(parsed) == len(independent) or (not independent and not parsed),
@@ -1371,7 +1371,6 @@ def _construct(cls) -> Any:
         for pname, param in sig.parameters.items():
             if pname == "self" or param.default is not inspect.Parameter.empty:
                 continue
-            ann = str(param.annotation)
             if "registry" in pname.lower():
                 from wifi_framework.core.execution.registry import CapabilityRegistry
                 from wifi_framework.tools.registry_loader import load_all_adapters
@@ -1665,8 +1664,8 @@ def stage_capture(report: Report, iface: Optional[str]) -> None:
         report.skip("capture stage", "needs root")
         return
 
-    print(f"  NOTE: ambient frames belong to other people. This stage records counts and")
-    print(f"        frame-type names only. No pcap is written and no payload is logged.\n")
+    print("  NOTE: ambient frames belong to other people. This stage records counts and")
+    print("        frame-type names only. No pcap is written and no payload is logged.\n")
 
     # Independent stdlib raw-socket capture. AF_PACKET needs ETH_P_ALL and
     # SOCK_RAW: monitor frames carry a radiotap header SOCK_DGRAM cannot strip.
@@ -1878,8 +1877,6 @@ def main() -> int:
                     print(f"    - {row.name}: {row.detail}")
 
         total = report.passed + report.failed
-        tally = " ".join(("P" if r.passed else ("S" if r.skipped else "F")) + ":" + r.name
-                         for r in report.rows)
         annotate("notice", "exercise-summary",
                  f"passed={report.passed} failed={report.failed} skipped={report.skipped} "
                  f"duration={elapsed:.0f}s")
