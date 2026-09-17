@@ -39,6 +39,22 @@ if os.path.isdir(_SRC) and _SRC not in sys.path:
 
 TIMEOUT = 15
 
+# Job logs and artifacts live in blob storage that is not reachable from every
+# environment reading CI results. When running under Actions, findings are also
+# emitted as annotations, which the check-run API does return.
+_IN_CI = bool(os.environ.get("GITHUB_ACTIONS"))
+
+
+def annotate(level: str, title: str, message: str) -> None:
+    """Emit a GitHub Actions annotation. No-op outside CI."""
+    if not _IN_CI:
+        return
+    # Annotation values are single-line; newlines must be escaped.
+    safe = str(message).replace("\n", " ").replace("\r", " ").replace("%", "%25")
+    safe = safe.replace(":", "%3A").replace(",", "%2C")
+    print(f"::{level} title={title}::{safe[:900]}")
+
+
 
 # --------------------------------------------------------------------------
 # Independent oracle. Deliberately does not use framework helpers.
@@ -152,6 +168,11 @@ class Report:
                 print(f"         framework claimed: {claimed}")
             if observed:
                 print(f"         independently observed: {observed}")
+            annotate(
+                "error",
+                name.replace(":", " -"),
+                f"claimed=[{claimed}] observed=[{observed}] detail=[{detail}]",
+            )
         return passed
 
 
@@ -383,7 +404,8 @@ def describe_environment() -> bool:
             return False
 
     rc, out, err = sh(["uname", "-r"])
-    print(f"\nkernel: {out.strip()}")
+    out_kernel = out.strip()
+    print(f"\nkernel: {out_kernel}")
 
     rc, out, _ = sh(["lsmod"])
     hwsim = "mac80211_hwsim" in out
@@ -395,12 +417,15 @@ def describe_environment() -> bool:
 
     ifaces = wireless_interfaces()
     print(f"wireless interfaces: {ifaces or 'none'}")
+    annotate("notice", "radios", f"kernel={out_kernel} hwsim={hwsim} phys={phys} interfaces={ifaces}")
 
     for iface in ifaces:
-        print(
-            f"  {iface}: type={truth_type(iface)} mac={truth_mac(iface)} "
+        detail = (
+            f"type={truth_type(iface)} mac={truth_mac(iface)} "
             f"up={truth_is_up(iface)} channel={truth_channel(iface)}"
         )
+        print(f"  {iface}: {detail}")
+        annotate("notice", f"iface-{iface}", detail)
 
     if not ifaces:
         print(
@@ -501,6 +526,12 @@ def main() -> int:
     print("\n" + "=" * 72)
     print(f"RESULT: {passed}/{len(report.results)} checks passed against a real radio")
     print("=" * 72)
+    annotate(
+        "notice" if not failed else "error",
+        "verification-result",
+        f"{passed}/{len(report.results)} checks passed on {iface}"
+        + ("" if not failed else "; failed: " + ", ".join(r.name for r in failed)),
+    )
     if failed:
         print("\nFailures:")
         for result in failed:
