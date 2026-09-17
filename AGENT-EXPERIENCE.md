@@ -876,3 +876,170 @@ failing build.
   script emits its results that way.
 - `scapy.all.__version__` does not exist in Scapy 2.7; use `importlib.metadata.version("scapy")`.
 - `EvidenceType` has no `OBSERVATION` member; capture evidence is `EvidenceType.CAPTURE`.
+
+## Session: 2026-09-17 - Review-Driven Hardening Pass (v0.5.1)
+
+### Context
+
+An external architecture review of the framework raised roughly two dozen concerns
+across execution safety, privilege handling, persistence, contract determinism and
+evidence semantics. Rather than implement it wholesale, each claim was reproduced first
+and only the ones that held were fixed. Eleven fixes landed across seven commits; four
+recommendations were declined with reasons recorded in the CHANGELOG; one open question
+was verified and found to be correct as designed.
+
+Test count 471 -> 634. Suite passes with and without Scapy installed. CI green on all
+four jobs, including the hwsim wireless job (17/17 checks, 12/12 capture and injection).
+
+### Challenges Encountered
+
+- **Free-text failure messages are load-bearing, and changing one silently changed
+  behaviour - twice.** `core/execution/gateway.py` maps an adapter's failure reason onto
+  a `FailureCategory` by substring match against `_REASON_CATEGORIES`. Rewording
+  "Tool 'x' not found in PATH" to "is not installed or not on PATH" downgraded every
+  missing-tool refusal from `TOOL_NOT_FOUND` to a generic `TOOL_ERROR`, which also
+  changes whether the capability is blocked permanently. The same trap reappeared with
+  privilege refusals: a message that does not contain `insufficient_privileges` is not
+  reported as a privilege problem, so an operator is told to fix the tool instead of
+  their privileges. **Lesson: in any codebase that classifies by substring, treat the
+  message as an interface. Grep the token table before rewording anything, and assert
+  the classification in a test rather than the prose.** Both fixes now have tests that
+  call the real `classify_failure` instead of checking a string.
+- **Redaction by parameter name destroyed findings.** The first implementation harvested
+  every value under a sensitive-named key anywhere in the structure, then masked that
+  value everywhere. It looked correct on synthetic data and immediately failed against
+  the real parsers: `john.py` and `hashcat.py` build
+  `parsed_data["cracked"] = [{"password": ..., "user": ...}]` and `aircrack.py` parses
+  `KEY FOUND! [ ... ]`. A recovered passphrase sits under the name `password`, was
+  harvested as though an operator had supplied it, and was then masked in the evidence,
+  the output and the report - deleting the finding, which is the one thing the
+  assessment exists to produce. **Lesson: a field name means different things on
+  different sides of an input/output boundary.** The fix distinguishes the two
+  operations: *harvesting* and *field masking* stop at an evidence container, while
+  *value substitution* does not, so a supplied secret a tool echoes into its own stdout
+  is still masked.
+- **Redaction scoped to one record leaked through the next.** Masking `log_action_selection`
+  correctly hid `parameters["password"]`, and the secret still reached disk - the later
+  execution event carried it inside `raw_command`, in a record where no parameter named
+  it. **Lesson: an audit trail is a sequence, not a set of independent documents.** A
+  value disclosed at planning time must still be masked at execution time, so the logger
+  accumulates what it has seen.
+- **Over-masking is as much a defect as under-masking.** Substring matching on `pass`
+  would have masked `passive` - a netdiscover boolean meaning "listen instead of probe" -
+  and matching on `key` would have caught `keyspace`. Whole-token matching avoids both.
+  The exclusions (`NOT_SENSITIVE`, and the captured WPS values `pke`/`pkr`/`e_nonce`/
+  `r_nonce`/`e_hash1`/`e_hash2`) are written down as a set with a reason each, and a test
+  asserts the documented exclusions are the exclusions in code, so the two cannot drift.
+- **Substring masking needs a length floor.** A one- or two-character secret occurs inside
+  unrelated tokens often enough that replacing it wrecks the surrounding record. The field
+  that carries it is still masked exactly; only the substring pass skips it, and the skip
+  is reported.
+- **Chipset detection tests passed with the fix disabled.** The first ten tests called
+  `detect_chipset` directly, so they verified a function that nothing called - precisely
+  the defect being fixed. `chipset` was read by five callers and assigned by none; a
+  correct function that no code path reaches is exactly what had shipped. **Lesson: when
+  the bug is "nothing populates this field", the test must drive the population path.**
+  An eleventh test runs the real discovery path and was confirmed to fail with
+  `chipset=None` when the assignment is removed.
+- **Mutation-checking every fix is not optional.** Each of the eleven fixes was reverted
+  in place and the tests re-run to confirm they fail. This caught the chipset problem
+  above, and caught three vacuous regression tests in the earlier interface-validation
+  fix, where a poisoned-interface test passed with the fix disabled because the real tool
+  was missing and `execute()` failed before validation was reached. Stub adapters in tests
+  now use `echo`, which always exists.
+- **Writing assertions from memory of an API wastes more time than probing it.** Four
+  consecutive failures in one probe script came from guessed shapes: `Claim.claim_type`
+  (it is `Claim.type`), `verifier.verify(state, request)` (arguments are the other way
+  round), `VerificationOutcome.status` (it wraps `.result`), and
+  `Finding(targets=...)` (it is `affected_assets`). A second probe then showed two of my
+  five *expected outcomes* were wrong - I had labelled a scenario "expect refuted" when
+  the supporting side was the strong one. **Lesson: measure before asserting. Every number
+  in `tests/test_contradictory_evidence.py` came from a probe run, not from reading the
+  design document.**
+- **Relative import depth, again.** `core/audit/logger.py` needs `...utils.system` (three
+  dots); `..utils` resolves to the nonexistent `wifi_framework.core.utils` and broke
+  collection of nine test modules. The same class of bug appeared earlier in the Scapy
+  adapter. Depth is easy to get wrong when a file moves between packages, and the failure
+  is a collection error rather than a clear message.
+- `ToolManager.__init__` requires a `registry` positional argument; `ToolManager()` in a
+  test raises `TypeError`. Construct it with `load_all_adapters(CapabilityRegistry())`, or
+  use `ToolManager.__new__` and set the two attributes when only `holds_capabilities` is
+  under test.
+- pytest `tmp_path` subdirectories must be created before writing into them; a helper that
+  writes an executable script needs `path.parent.mkdir(parents=True, exist_ok=True)`.
+- Nested f-strings cannot reuse the outer quote character on Python 3.11 -
+  `f"{x.to_dict() if hasattr(x, "to_dict") else x}"` is a `SyntaxError`.
+- Editing test files through `python3 -c` with heavily escaped quotes silently did nothing
+  once; the assertion that should have failed did not, because the whole heredoc had been
+  mangled by shell quoting. Writing the patch to a file and deleting it afterwards is
+  reliable and reviewable.
+
+### Technical Decisions
+
+- **Do not implement a review wholesale.** Four recommendations were declined and the
+  reasons recorded in the CHANGELOG rather than silently dropped: a separate
+  `CommandPolicy` dataclass (duplicates the existing `ActionPolicy`, and the review's own
+  recommendation warns against duplicate validation); an information-gain planner redesign
+  and benchmark harness (research-scale, no measured defect, needs a ground-truth scenario
+  set first); property-based testing (would add `hypothesis` as a dependency, and
+  `scripts/exercise_framework.py` already fuzzes 11 parsers against 14 malformed inputs);
+  and a full ruff/mypy/coverage gate in one change (worth doing, but as a separate
+  decision, since it churns every module at once).
+- **Do not loosen a security control to fix an accuracy problem.** `root` still means
+  uid 0. The review was right that requiring root where `CAP_NET_ADMIN` suffices is
+  over-strict, but relaxing it across 19 capabilities at once would rest on an assumption
+  about what each tool needs. Fine-grained `cap_*` tokens are the way to express a narrower
+  requirement, and the two gates that were changed (`aireplay-ng --test`, `airmon-ng`)
+  were changed because the required capability is documented kernel behaviour, not
+  inference - and because both fall through to an existing path if the attempt fails.
+- **Redact at the persistence boundary, not at execution.** In-memory contracts stay
+  exact: the Decision Engine generated those parameters, and `execution-result` promises
+  its recorded command is what actually ran. Only the persisted copy is masked, and it
+  declares that it was masked. An audit trail that silently presents `***REDACTED***` as
+  the value that was used is worse than one that says a filter ran.
+- **Resolve at the point of execution.** Threading one resolved path through the executor
+  and 38 adapters would have closed the gap completely, but the churn is disproportionate.
+  Resolving inside `run_command`, immediately before `Popen`, shrinks the window to
+  microseconds and makes the executed file the resolved file; the gateway and the
+  availability check share the same resolver so they cannot disagree about what a name
+  means. `ToolRef.path` records it.
+- **Prefer one choke point to many call sites.** Redaction lives in `AuditLogger.log_event`
+  because every audit record passes through it. Applying it at the dozen call sites that
+  happen to carry parameters today would leave the next event type free to leak.
+- **Verify before reporting.** The review's contradictory-evidence concern turned out to be
+  already handled, and the honest deliverable was a test that pins it rather than a fix
+  that changes nothing. Likewise `ConfidenceLevel` looked like an enum leaking its `repr`
+  into a contract payload; it subclasses `float`, so `json.dumps` writes `0.85`. Checked
+  rather than assumed - both directions matter.
+
+### Success Metrics
+
+- 634 tests pass with Scapy installed, 631 + 3 skipped without. Was 471 / 468 + 3.
+- Every fix mutation-checked: reverting it in place makes its tests fail.
+- CI green on 4 jobs (py3.10, py3.11, py3.12, hwsim wireless). Hardware job: 17/17
+  interface checks on wlan1, 12/12 capture and injection checks against real radios.
+- Measured, not asserted: a timed-out command's grandchild is killed (previously survived);
+  digests are identical across three separate processes (previously differed); artifacts and
+  audit files are 0700/0600 (previously 0755/0644); a hostile pre-created `/tmp` audit
+  directory is refused rather than written into; `Popen` receives an absolute path.
+
+### Remaining Limitations
+
+- Redaction is name-driven. A capability that stored a secret under a parameter name the
+  module does not recognise would not be masked. A test scans the adapter sources for
+  secret-shaped names and fails if one is neither masked nor explicitly accounted for, which
+  catches the realistic case but not an arbitrary one.
+- Tool output is deliberately not redacted, so a report containing a recovered passphrase
+  discloses it. That is the finding, and the evidence hierarchy requires independent
+  confirmation of a `credential_observation` rather than hiding it - but a report leaving the
+  machine carries that material with it.
+- `resolve_binary` closes the resolve/exec gap inside `run_command`; the gateway's earlier
+  availability check is still a separate resolution. Both go through the same resolver and
+  the exec-time one is authoritative, so a disagreement surfaces as `TOOL_NOT_FOUND` rather
+  than as a wrong binary running.
+- Two `except (ValueError, TypeError): pass` handlers remain in
+  `AccessPoint.update_from_evidence` (channel and signal parsing). A malformed value is
+  dropped without a trace. Benign - the entity keeps its previous value and the raw evidence
+  is retained - but inconsistent with `discovery_errors` elsewhere.
+- Three further best-effort silent handlers remain: `interface_manager.py` (channel parse
+  skip) and two in `utils/system.py` (version probe loop, interface list fallback).

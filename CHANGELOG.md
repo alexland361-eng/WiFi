@@ -631,6 +631,182 @@ where `iw` exists, and never parsed multi-radio output.
   used, so this verifies framing and the capture path, not association or authentication state
   machines.
 
+## [0.5.1] - 2026-09-17
+
+Hardening pass over the execution, persistence and privilege paths, following an
+external architecture review. Every fix has a test that was confirmed to fail when the
+fix is reverted. No production behaviour was loosened: `root` still means uid 0, scope
+enforcement is unchanged, and the engines still communicate only through contracts.
+
+### Fixed
+
+#### Execution
+- **Tool binaries are resolved once and the resolved path is executed** (`0cae7ac`).
+  `check_tool_available` resolved a name with `shutil.which`, the gateway resolved it
+  again to decide whether to refuse, and `run_command` handed the bare *name* to
+  `Popen` - which searches `PATH` a second time inside the kernel. Any of the three
+  could disagree with the others if `PATH` changed or a writable directory earlier in
+  it gained an executable in between. `run_command` now resolves immediately before
+  the spawn and executes that absolute path; the gateway and the availability check
+  share the resolver; `ToolRef.path` falls back to it so the audit trail records a
+  path rather than `null`.
+- **Non-absolute names containing a path separator are refused.** `shutil.which`
+  treats `./evil` as relative to the working directory, so a capability declaration -
+  or a tool parameter, since the Impacket adapter derives its command name from
+  `parameters["impacket_tool"]` - could select a file planted in the cwd instead of an
+  installed binary. Absolute paths are still honoured. All 59 declared `tool_binary`
+  values are bare names; a test asserts none is malformed.
+- `resolve_binary` accepts an optional `allowed_dirs` to pin resolution to a known
+  toolchain. It scopes the search rather than filtering its result, so a pinned
+  directory is not shadowed into invisibility by an unpinned one earlier on `PATH`.
+
+#### Privileges
+- **Linux capabilities are checked, not just uid 0** (`3140960`). Every privileged gate
+  asked `is_root()`, but administering a wireless interface needs `CAP_NET_ADMIN` and
+  opening a raw capture socket needs `CAP_NET_RAW` - neither needs a root uid.
+  Concretely: `ToolManager` skipped the `aireplay-ng --test` injection probe for any
+  non-root process, so `supports_injection` stayed unknown and every packet-injection
+  capability looked unavailable; `InterfaceManager` skipped the `airmon-ng` path on the
+  same condition and fell through to `iw` calls it attempted unconditionally anyway.
+- `utils/system.py` gains `CAPABILITY_BITS`, `decode_capability_mask`,
+  `effective_capabilities`, `has_capability`, `normalize_privilege_token` and
+  `satisfies_privileges`. The bit table is verified against the installed
+  `include/uapi/linux/capability.h` by a test that parses the header and fails on any
+  disagreement (skipped where no header is installed).
+- `core/models/capability.py` documented `privileges` as "e.g. root, net_admin";
+  nothing implemented the second form. Both `cap_net_admin` and `net_admin` spellings
+  now work. **`root` keeps its strict meaning** - loosening it would have weakened a
+  control on 19 capabilities at once on the strength of an assumption about what each
+  tool needs. An unrecognised token fails closed rather than passing, and a test
+  asserts every `privileges` value declared across the 38 adapters is evaluable.
+- `ToolManager.holds_capabilities()` treats root as holding the full set, since the
+  capability list is read once at construction.
+- Privilege refusals are prefixed with the token `insufficient_privileges`, which the
+  gateway and adapter base already map to that failure category, and now state what the
+  process *does* hold. A malformed declaration deliberately carries no such prefix,
+  because elevating cannot fix it.
+
+#### Persistence and secrets
+- **Operator secrets are kept out of the persisted audit trail** (`c217f50`). The
+  adapters put secrets directly into command lines - `aircrack-ng` a passphrase from
+  `parameters["password"]` or `parameters["key"]`, `reaver` a WPS PIN, Impacket
+  `user:pass@host`, `smbclient` `user%password`, `snmpwalk` a community string - and the
+  audit logger wrote all of it verbatim, making the trail a credential file. New
+  `utils/redaction.py`, applied in `AuditLogger.log_event` (the single point every audit
+  record passes through, so a new event type cannot leak by forgetting to filter) and in
+  `save_report`. In-memory contracts stay exact. Each filtered record carries a
+  `redaction` block naming the masked fields.
+  - Matching is on whole name tokens, never substrings: a substring rule would mask
+    `passive` (a netdiscover boolean) and `keyspace`. Non-secret paths (`hash_file`,
+    `wordlist`, `potfile_disable`) and usernames are preserved, so the record still says
+    what ran against what.
+  - Secrets accumulate across the trail. A passphrase is supplied at parameterisation
+    and appears in a command line at execution; masking each event independently leaked
+    it through the later one.
+  - **Tool output is not masked.** `john.py` and `hashcat.py` build
+    `parsed_data["cracked"] = [{"password": ...}]` and `aircrack.py` parses
+    `KEY FOUND! [ ... ]` - a sensitive-named field inside an evidence container holds the
+    passphrase the assessment *recovered*. Harvesting and field masking therefore stop at
+    an evidence-container boundary, while value substitution does not, so a supplied
+    secret a tool echoes into its own stdout is still masked.
+  - Captured WPS values (`pke`, `pkr`, `e_nonce`, `r_nonce`, `e_hash1`, `e_hash2`) are
+    not masked: they come from frames transmitted in the clear, so they are evidence, and
+    masking them would break reproducibility while protecting nothing. `authkey` is
+    masked as derived key material.
+  - A test scans every adapter source for secret-shaped parameter names and fails if one
+    is neither masked nor explicitly accounted for.
+- **Artifacts and audit files are owner-only** (`89358e9`). Both were created with the
+  umask default - 0755 directories, 0644 files - leaving captured traffic and audit
+  logs world-readable. Now 0700/0600, set at creation via `os.open` rather than by a
+  later `chmod`. `ensure_private_dir` refuses to reuse an existing directory owned by
+  another uid, so a hostile `/tmp` pre-creation cannot redirect the trail.
+- **Audit write failures are visible** (`89358e9`). `except OSError: pass` meant an
+  assessment whose trail silently stopped being recorded still looked auditable.
+  Failures are collected on `AuditLogger.write_failures`.
+
+#### Contracts
+- **Message digests are deterministic across processes** (`ea968e8`). `digest()` and
+  `message_digest()` used `json.dumps(..., default=str)`, so any object without a
+  serialiser contributed its `repr` - which embeds a memory address. The same message
+  hashed to `e6743abb...` in one process and `7cae5367...` in another while the
+  docstring promised a stable identifier. `to_jsonable` now substitutes a stable type
+  name, and `default=str` is gone so an unserialisable object fails loudly instead of
+  hashing to an address.
+- **Recorded commands preserve argument boundaries** (`251bd07`).
+  `contracts/execution.py` promises the recorded command can be re-run by an auditor
+  without reinterpretation, but it was reconstructed with `raw_command.split()`, which
+  turns an SSID such as "Office Network" into two elements. `AdapterExecutionResult`
+  now carries the `argv` actually passed to subprocess, and `gateway.recorded_command`
+  prefers it. A library adapter such as Scapy records `argv=[]` rather than a
+  fabricated invocation split out of a prose description.
+
+#### Capability discovery
+- **`InterfaceCapability.chipset` is populated** (`567427c`). The field was read by five
+  callers - the gateway, `InterfaceManager`, the world-model publisher and the decision
+  engine's state view - and assigned by none, so every `WorldState` published
+  `chipset: null`. The branch meant to fill it read `bus-info` from `ethtool -i` under a
+  comment claiming it "often contains chipset hint"; `bus-info` is a bus *address*
+  (`usb001::003`), and the body was `pass`. `detect_chipset` now reads the identifiers
+  sysfs actually provides, in preference order: USB `PRODUCT=<vendor>/<product>` from
+  the uevent, PCI vendor/device files, `MODALIAS`, then the driver name. Results are
+  prefixed with how they were derived (`usb:cf8:3007`, `pci:0x10ec:0x8812`,
+  `modalias:...`) so a consumer can tell a hardware identifier from a guess.
+  `bus_info` is retained separately for what it actually is.
+- **Discovery failures are recorded** (`567427c`). Five `except Exception: pass`
+  handlers in deep discovery now append to `InterfaceCapability.discovery_errors`.
+  Best-effort discovery is correct, but "not observed" and "observed absent" are
+  different facts and a framework built on that distinction should not collapse them.
+
+#### Validation
+- **The interface named in an `ActionRequest` is validated for all 38 adapters**
+  (`66a6e70`). `ToolAdapterBase.execute` passed the interface straight to
+  `build_command` without checking it against `validate_interface`, so an interpolated
+  interface name reached a command line unvalidated. The gap was narrow - the Decision
+  Engine validates upstream - but the base class is the enforcement point that does not
+  depend on the caller behaving.
+- **The Scapy adapter checks the interface contract before probing for the library**
+  (`66a6e70`). Validation order was environment-dependent: with Scapy absent the
+  interface error surfaced, with it present the same request produced a different
+  failure. Two tests failed in one environment and passed in the other.
+
+### Added
+- `tests/test_binary_resolution.py` (11 tests), `tests/test_privilege_capabilities.py`
+  (22), `tests/test_redaction.py` (75), `tests/test_contradictory_evidence.py` (13),
+  `tests/test_capability_discovery.py` (11), `tests/test_storage_permissions.py` (8),
+  `tests/test_process_supervision.py` (8), plus digest-determinism and argv tests.
+  Suite: 471 -> 634 tests.
+- `scripts/exercise_framework.py` (`34ea0a4`): a 13-stage runner that exercises the
+  whole framework on a machine with real radios, bounded by safety checks. Intended for
+  an operator's VM; the sandbox has no wireless hardware.
+
+### Verified, not changed
+- **Contradictory evidence is preserved and detected** (`3776c38`). Raised in review as
+  an open question. Measured through the real pipeline: both observations survive in
+  `state.evidences`, `AccessPoint.encryption` accumulates to `['WPA2', 'WEP']` rather
+  than taking the last value, and an equal-strength disagreement yields `contradicted`
+  at half the supporting confidence with `details.contradiction` naming the disagreeing
+  observation and two action requests for more evidence. A stronger contradiction
+  refutes; a weaker one is still recorded. Time-varying scalars (channel, signal) do
+  take the latest value, which is correct for radio state, and the superseded
+  observation is retained. No production change; 13 tests pin it, 11 of which fail when
+  either preservation layer is broken.
+- Process teardown (`594554c`): a timed-out command's whole process group is
+  terminated, SIGTERM then SIGKILL. Measured - previously a grandchild survived the
+  timeout.
+
+### Declined
+Recorded so the reasoning is available rather than lost:
+- A separate `CommandPolicy` dataclass. It would duplicate the existing `ActionPolicy`,
+  which already validates interface names, scope and parameters, and the review's own
+  recommendation warns against duplicate validation and multiple sources of truth.
+- Redesigning the planner around an information-gain metric, and a planner benchmark
+  harness. Research-scale work with no measured defect behind it, and it needs a
+  ground-truth scenario set defined first.
+- Property-based testing. It would add `hypothesis` as a dependency;
+  `scripts/exercise_framework.py` already fuzzes 11 parsers against 14 malformed inputs.
+- A full ruff/mypy/coverage gate as one change. Worth doing, but as a separate
+  decision - it produces churn across every module at once.
+
 ## [Unreleased]
 
 ### Planned
