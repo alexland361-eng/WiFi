@@ -38,9 +38,9 @@ def check_tool_available(tool_binary: str) -> Tuple[bool, Optional[str], Optiona
 
     Returns (available, path, version_or_error).
     """
-    path = shutil.which(tool_binary)
+    path = resolve_binary(tool_binary)
     if not path:
-        return False, None, f"Tool '{tool_binary}' not found in PATH"
+        return False, None, describe_unresolved(tool_binary)
 
     # Try to get version
     version = None
@@ -141,6 +141,96 @@ def terminate_process_group(proc: "subprocess.Popen", grace_seconds: float = TER
     return proc.poll() is not None
 
 
+def resolve_binary(
+    tool_binary: str,
+    *,
+    allowed_dirs: Optional[Tuple[str, ...]] = None,
+) -> Optional[str]:
+    """Resolve a tool name to the absolute path that will actually be executed.
+
+    Checking with :func:`shutil.which` and then executing the bare *name* leaves a
+    gap between the two: ``PATH`` can change, or a writable directory earlier in it
+    can gain an executable of the same name, so the binary that runs is not the one
+    that was checked. Resolution and execution must name the same file, so callers
+    resolve once and hand the returned path to :mod:`subprocess`.
+
+    Resolution rules:
+
+    * an absolute path is honoured if it exists and is executable - the caller
+      deliberately named a file, as the process-supervision tests do with a
+      temporary script;
+    * a name containing a path separator that is *not* absolute is refused.
+      :func:`shutil.which` treats such a name as relative to the working
+      directory, so a capability declaration or a tool parameter (the Impacket
+      adapter derives its command name from ``parameters["impacket_tool"]``)
+      could select a file planted in the cwd instead of an installed binary.
+      Every ``tool_binary`` declared in the source tree is a bare name;
+    * a bare name is resolved against ``PATH``, and the result must be executable.
+
+    ``allowed_dirs``, when given, restricts the search to those directories: a
+    caller that wants to pin the framework to a known toolchain says so here, and
+    a same-named binary in an unpinned directory earlier on ``PATH`` is not found
+    rather than found and then rejected. The default is unrestricted, matching the
+    previous behaviour.
+
+    Returns the absolute path, or ``None`` if the name is unusable. Callers that
+    need to explain a ``None`` should use :func:`describe_unresolved`.
+    """
+    if not isinstance(tool_binary, str):
+        return None
+    name = tool_binary.strip()
+    if not name or "\x00" in name or any(char.isspace() for char in name):
+        return None
+
+    separators = {os.sep} | ({os.altsep} if os.altsep else set())
+    has_separator = any(sep in name for sep in separators)
+
+    if has_separator:
+        if not os.path.isabs(name):
+            return None
+        candidate = os.path.abspath(name)
+        if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+            return None
+    else:
+        search_path = os.pathsep.join(allowed_dirs) if allowed_dirs else None
+        candidate = shutil.which(name, path=search_path)
+        if not candidate:
+            return None
+
+    if allowed_dirs:
+        # Covers the absolute-path branch too: naming a file directly must not
+        # bypass a pin the caller asked for.
+        resolved_dir = os.path.dirname(os.path.realpath(candidate))
+        permitted = {os.path.realpath(directory) for directory in allowed_dirs}
+        if resolved_dir not in permitted:
+            return None
+    return candidate
+
+
+def describe_unresolved(tool_binary: str) -> str:
+    """Why :func:`resolve_binary` returned ``None`` for this name.
+
+    Reporting "not installed or not on PATH" for a name the resolver refused on
+    shape grounds would send an operator looking for a missing package when the
+    real problem is a malformed declaration.
+    """
+    if not isinstance(tool_binary, str) or not tool_binary.strip():
+        return "tool binary name is empty"
+    separators = {os.sep} | ({os.altsep} if os.altsep else set())
+    if any(sep in tool_binary for sep in separators) and not os.path.isabs(tool_binary):
+        return (
+            f"tool name '{tool_binary}' contains a path separator but is not absolute; "
+            "relative paths are refused so a declaration or parameter cannot select a "
+            "file planted in the working directory"
+        )
+    if os.path.isabs(tool_binary) and not (os.path.isfile(tool_binary) and os.access(tool_binary, os.X_OK)):
+        return f"Tool path '{tool_binary}' is not an executable file"
+    # Wording is load-bearing: the gateway classifies failure reasons by substring,
+    # and "not found in PATH" is the token that maps to TOOL_NOT_FOUND. Rephrasing
+    # this would silently downgrade a missing-tool refusal to a generic tool error.
+    return f"Tool '{tool_binary}' not found in PATH"
+
+
 def run_command(
     cmd: list[str],
     timeout: int = 30,
@@ -153,20 +243,32 @@ def run_command(
     The child is started in its own session so that a timeout tears down the whole
     process tree rather than leaving grandchildren running.
 
+    ``cmd[0]`` is resolved to an absolute path *here*, immediately before the
+    spawn, and that path is what is executed - see :func:`resolve_binary`. Passing
+    a bare name to ``Popen`` would re-resolve it against ``PATH`` inside the
+    kernel's search, so a binary swapped in after the availability check could run
+    instead of the one that was checked.
+
     Returns (exit_code, stdout, stderr, duration_seconds). Exit code 124 means the
-    timeout elapsed, 127 that the executable was not found.
+    timeout elapsed, 127 that the executable was not found or was refused.
     """
     import os
     import time
 
     start = time.time()
+    if not cmd:
+        return 127, "", "Command not found: empty command", time.time() - start
+    resolved = resolve_binary(str(cmd[0]))
+    if resolved is None:
+        return 127, "", describe_unresolved(str(cmd[0])), time.time() - start
+    argv = [resolved, *cmd[1:]]
     # start_new_session is POSIX-only; the framework targets Linux, but a Windows
     # import must not explode at call time.
     session_kwargs = {"start_new_session": True} if os.name == "posix" else {}
     proc = None
     try:
         proc = subprocess.Popen(
-            cmd,
+            argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

@@ -29,7 +29,6 @@ Status classification notes
 from __future__ import annotations
 
 import os
-import shutil
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -49,6 +48,7 @@ from .artifacts import (
     ArtifactStore,
 )
 from .executor import CapabilityExecutor
+from ...utils.system import describe_unresolved, resolve_binary
 
 #: Parameter names that may hold a path a tool wrote to.
 _PATH_PARAMETER_KEYS = (
@@ -76,6 +76,12 @@ _KIND_BY_EXTENSION = {
 _REASON_CATEGORIES: Tuple[Tuple[str, str], ...] = (
     ("not found in path", FailureCategory.TOOL_NOT_FOUND),
     ("tool_not_found", FailureCategory.TOOL_NOT_FOUND),
+    # resolve_binary refuses a non-absolute name containing a separator, and an
+    # absolute path that is not an executable file. Both mean "this binary cannot
+    # be invoked", which is the same permanent refusal as a missing tool - no
+    # amount of replanning fixes a malformed declaration.
+    ("contains a path separator", FailureCategory.TOOL_NOT_FOUND),
+    ("is not an executable file", FailureCategory.TOOL_NOT_FOUND),
     ("not available", FailureCategory.CAPABILITY_UNAVAILABLE),
     ("root privileges", FailureCategory.INSUFFICIENT_PRIVILEGES),
     ("must be root", FailureCategory.INSUFFICIENT_PRIVILEGES),
@@ -241,12 +247,12 @@ class ExecutionGateway:
         # unavailable" here would send the operator after the wrong problem - and would make the
         # refusal look retriable when no amount of replanning can fix a missing binary. This is a
         # PATH scan, not the version probe ``check_tool_available`` performs.
-        if not shutil.which(metadata.tool_binary):
+        if resolve_binary(metadata.tool_binary) is None:
             return None, self._refuse(
                 request,
                 status=ExecutionStatus.UNSUPPORTED,
                 category=FailureCategory.TOOL_NOT_FOUND,
-                message=f"Tool '{metadata.tool_binary}' is not installed or not on PATH",
+                message=describe_unresolved(metadata.tool_binary),
                 implementation=implementation,
                 metadata=metadata,
             )
@@ -555,14 +561,22 @@ class ExecutionGateway:
     def _tool_ref(self, metadata: Any, implementation: str) -> ToolRef:
         version: Optional[str] = None
         path: Optional[str] = None
+        probe_error: Optional[str] = None
         if self.tool_manager is not None:
             try:
                 info = self.tool_manager.check_tool_deep(metadata.tool_binary)
                 version = info.version_raw
                 path = info.path
-            except Exception:
+            except Exception as exc:
                 # Tool metadata is descriptive; a probe failure must not abort the execution.
                 version = None
+                probe_error = f"{type(exc).__name__}: {exc}"
+        if path is None:
+            # The probe is cached and best-effort. ``ToolRef.path`` is what the audit
+            # trail records as the binary that ran, so an unknown path here would
+            # leave the record silent on exactly the field the resolver exists to pin
+            # down. Resolve directly rather than publish ``path: null``.
+            path = resolve_binary(metadata.tool_binary)
         return ToolRef(
             name=metadata.tool_binary,
             version=version,

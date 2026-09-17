@@ -448,7 +448,12 @@ def test_missing_tool_is_unsupported_and_reports_no_exit_code(bin_dir, workspace
     assert result.exit_code is None
     # The missing binary is the fundamental blocker, not the absent interface.
     assert result.failure.category == FailureCategory.TOOL_NOT_FOUND
-    assert "not installed" in result.failure.message
+    # The wording is load-bearing, not cosmetic: the gateway classifies failure
+    # reasons by substring, and "not found in PATH" is the token that maps to
+    # TOOL_NOT_FOUND. Asserting the token keeps this test coupled to the contract
+    # between resolve_binary's message and the classifier.
+    assert "not found in PATH" in result.failure.message
+    assert "airodump-ng" in result.failure.message
     assert outcome.evidences == []
 
 
