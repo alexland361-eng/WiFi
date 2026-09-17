@@ -18,10 +18,33 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...utils.system import run_command, check_interface_exists
+from ...utils.system import check_interface_exists, effective_capabilities, run_command
 from ...utils.validation import validate_mac, normalize_mac
 from ..models.assessment_state import InterfaceInfo
 from .tool_manager import ToolManager
+
+
+def _can_admin_interfaces(tool_manager: Any) -> bool:
+    """Whether this process may bring interfaces up/down and switch their type.
+
+    Those operations require CAP_NET_ADMIN, not a root uid. Gating on ``is_root``
+    meant an unprivileged process holding CAP_NET_ADMIN - a normal way to run a
+    wireless assessment with the minimum necessary privilege - skipped the
+    airmon-ng path entirely and fell through to the raw ``iw`` calls below, which
+    were attempted regardless and would have failed with EPERM anyway. Asking about
+    the capability is both more permissive where that is correct and more accurate:
+    if the attempt fails, the failure is classified as insufficient_privileges from
+    a real EPERM rather than silently never tried.
+
+    Falls back to a live read when the manager has no recorded capability set, so a
+    caller that constructs a stub manager is not silently treated as unprivileged.
+    """
+    if getattr(tool_manager, "is_root", False):
+        return True
+    held = getattr(tool_manager, "capabilities", None)
+    if held is None:
+        held = effective_capabilities()
+    return "cap_net_admin" in set(held)
 
 
 class InterfaceManager:
@@ -122,7 +145,7 @@ class InterfaceManager:
 
         # Try airmon-ng first (handles driver quirks)
         tool_info = self.tool_manager.check_tool_deep("airmon-ng")
-        if tool_info.available and self.tool_manager.is_root:
+        if tool_info.available and _can_admin_interfaces(self.tool_manager):
             cmd = ["airmon-ng", "start", interface]
             if channel:
                 cmd.append(str(channel))
@@ -183,7 +206,7 @@ class InterfaceManager:
 
         # Try airmon-ng stop
         tool_info = self.tool_manager.check_tool_deep("airmon-ng")
-        if tool_info.available and self.tool_manager.is_root:
+        if tool_info.available and _can_admin_interfaces(self.tool_manager):
             exit_code, stdout, stderr, _ = run_command(["airmon-ng", "stop", monitor_interface], timeout=10)
             if exit_code == 0:
                 return True, f"Monitor interface {monitor_interface} removed via airmon-ng"

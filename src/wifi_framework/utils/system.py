@@ -7,7 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .validation import validate_interface
 
@@ -30,6 +30,191 @@ def is_root() -> bool:
     except AttributeError:
         # Windows fallback
         return False
+
+
+#: Linux capability bit numbers, from ``include/uapi/linux/capability.h``. Verified
+#: against the header installed on the development machine rather than recalled:
+#: CAP_NET_ADMIN=12, CAP_NET_RAW=13, CAP_SETFCAP=31, CAP_PERFMON=38.
+#:
+#: These are an ABI, not an implementation detail - the kernel exposes them as bit
+#: positions in ``/proc/<pid>/status`` and they have never been renumbered, because
+#: renumbering would break every setuid binary on Linux.
+CAPABILITY_BITS: Dict[str, int] = {
+    "cap_chown": 0,
+    "cap_dac_override": 1,
+    "cap_dac_read_search": 2,
+    "cap_fowner": 3,
+    "cap_fsetid": 4,
+    "cap_kill": 5,
+    "cap_setgid": 6,
+    "cap_setuid": 7,
+    "cap_setpcap": 8,
+    "cap_linux_immutable": 9,
+    "cap_net_bind_service": 10,
+    "cap_net_broadcast": 11,
+    "cap_net_admin": 12,
+    "cap_net_raw": 13,
+    "cap_ipc_lock": 14,
+    "cap_ipc_owner": 15,
+    "cap_sys_module": 16,
+    "cap_sys_rawio": 17,
+    "cap_sys_chroot": 18,
+    "cap_sys_ptrace": 19,
+    "cap_sys_pacct": 20,
+    "cap_sys_admin": 21,
+    "cap_sys_boot": 22,
+    "cap_sys_nice": 23,
+    "cap_sys_resource": 24,
+    "cap_sys_time": 25,
+    "cap_sys_tty_config": 26,
+    "cap_mknod": 27,
+    "cap_lease": 28,
+    "cap_audit_write": 29,
+    "cap_audit_control": 30,
+    "cap_setfcap": 31,
+    "cap_mac_override": 32,
+    "cap_mac_admin": 33,
+    "cap_syslog": 34,
+    "cap_wake_alarm": 35,
+    "cap_block_suspend": 36,
+    "cap_audit_read": 37,
+    "cap_perfmon": 38,
+    "cap_bpf": 39,
+    "cap_checkpoint_restore": 40,
+}
+
+#: ``privileges`` in capability metadata means "root", which the framework has
+#: always honoured. Fine-grained tokens let a capability say what it actually
+#: needs: ``iw dev wlan0 set type monitor`` requires CAP_NET_ADMIN, not full root,
+#: and a raw-socket injection test requires CAP_NET_RAW.
+ROOT_PRIVILEGE = "root"
+
+
+def normalize_privilege_token(token: str) -> Optional[str]:
+    """Canonical ``cap_*`` spelling of a privilege token, or ``None`` if unknown.
+
+    ``core/models/capability.py`` documents the ``privileges`` list as
+    "e.g. root, net_admin" - the bare spelling. Both ``net_admin`` and
+    ``cap_net_admin`` are accepted so a capability declaration written to the
+    documented example works; anything else is unknown and must fail closed.
+    """
+    if not isinstance(token, str):
+        return None
+    name = token.strip().lower()
+    if not name:
+        return None
+    if name == ROOT_PRIVILEGE:
+        return ROOT_PRIVILEGE
+    if name in CAPABILITY_BITS:
+        return name
+    prefixed = f"cap_{name}"
+    if prefixed in CAPABILITY_BITS:
+        return prefixed
+    return None
+
+
+def decode_capability_mask(mask: int) -> Set[str]:
+    """Decode a ``Cap*`` hex mask from ``/proc/<pid>/status`` into capability names.
+
+    Separated from :func:`effective_capabilities` so the bit arithmetic can be
+    tested directly: an unprivileged test process has ``CapEff`` 0, which decodes
+    correctly but exercises none of the table.
+    """
+    if not isinstance(mask, int) or mask < 0:
+        return set()
+    return {name for name, bit in CAPABILITY_BITS.items() if mask & (1 << bit)}
+
+
+def effective_capabilities() -> Set[str]:
+    """The Linux capabilities this process actually holds, lower-cased names.
+
+    Reads the ``CapEff`` mask from ``/proc/self/status``. Returns an empty set on
+    platforms without that file - an empty set is the honest answer, and every
+    consumer treats "capability not held" as a refusal rather than an exception.
+
+    A root process holds the full set, so callers need not special-case root when
+    they ask about a capability; they must still special-case it when the metadata
+    demands ``root`` specifically, which :func:`satisfies_privileges` does.
+    """
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("CapEff:"):
+                    return decode_capability_mask(int(line.split(":", 1)[1].strip(), 16))
+    except (OSError, ValueError, IndexError):
+        return set()
+    return set()
+
+
+def has_capability(name: str) -> bool:
+    """Whether this process holds a single capability.
+
+    An unknown capability name is never held. Guessing would turn a typo in a
+    capability declaration into a silently satisfied requirement.
+    """
+    if not isinstance(name, str):
+        return False
+    canonical = normalize_privilege_token(name)
+    if canonical is None or canonical == ROOT_PRIVILEGE:
+        return False
+    return canonical in effective_capabilities()
+
+
+def satisfies_privileges(required: Sequence[str]) -> Tuple[bool, str]:
+    """Whether the current process satisfies a capability's ``privileges`` list.
+
+    ``root`` keeps its strict meaning - the uid must be 0. Loosening it to "root or
+    the relevant capabilities" would weaken a control on 19 capabilities at once,
+    on the strength of an assumption about what each tool needs; a tool declared as
+    needing root may need it for reasons beyond network administration.
+    Fine-grained tokens are the way to express a narrower requirement.
+
+    An unrecognised token fails closed. A privilege requirement the framework
+    cannot evaluate must refuse, because passing it would mean executing a
+    privileged action on the strength of a declaration nobody checked.
+
+    Returns (satisfied, reason). ``reason`` is empty when satisfied.
+
+    A shortfall is prefixed with the literal token ``insufficient_privileges``,
+    which both :mod:`core.execution.gateway` and ``ToolAdapterBase`` already map to
+    ``FailureCategory.INSUFFICIENT_PRIVILEGES``. The rest of the message states what
+    is required *and* what the process actually holds, so an operator running with
+    CAP_NET_ADMIN but not root sees the real state instead of a bare "not root".
+    An unrecognised token deliberately carries no such prefix: a broken declaration
+    is a tool error, not a privilege shortfall, and must not be reported as
+    something the operator can fix by elevating.
+    """
+    if not required:
+        return True, ""
+
+    held = effective_capabilities()
+    missing: List[str] = []
+    for token in required:
+        if not isinstance(token, str) or not token.strip():
+            missing.append(repr(token))
+            continue
+        canonical = normalize_privilege_token(token)
+        if canonical == ROOT_PRIVILEGE:
+            if not is_root():
+                missing.append(ROOT_PRIVILEGE)
+        elif canonical is not None:
+            if canonical not in held:
+                missing.append(canonical)
+        else:
+            # Unknown requirement: refuse, and say so explicitly rather than
+            # folding it into "missing" as though it were a real capability.
+            return False, (
+                f"unrecognised privilege requirement '{token}'; refusing rather than "
+                "assuming it is satisfied"
+            )
+
+    if not missing:
+        return True, ""
+    summary = ", ".join(sorted(held)) if held else "none"
+    return False, (
+        f"insufficient_privileges: requires {', '.join(missing)}; "
+        f"this process holds: {summary}"
+    )
 
 
 def check_tool_available(tool_binary: str) -> Tuple[bool, Optional[str], Optional[str]]:

@@ -6,7 +6,14 @@ from __future__ import annotations
 from typing import Dict, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
-from ...utils.system import check_tool_available, get_os_info, is_root, check_interface_exists
+from ...utils.system import (
+    check_interface_exists,
+    check_tool_available,
+    effective_capabilities,
+    get_os_info,
+    is_root,
+    satisfies_privileges,
+)
 
 
 class CapabilityChecker:
@@ -15,6 +22,10 @@ class CapabilityChecker:
     def __init__(self):
         self.os_info = get_os_info()
         self.is_root = is_root()
+        #: Capabilities actually held. ``is_root`` alone cannot express a process
+        #: running unprivileged with CAP_NET_ADMIN, which is a normal and sufficient
+        #: way to administer wireless interfaces.
+        self.capabilities = sorted(effective_capabilities())
 
     def check(self, capability: ToolCapabilityMetadata, interface: str = None) -> Tuple[bool, str, Dict]:
         """
@@ -25,6 +36,7 @@ class CapabilityChecker:
         details = {
             "os": self.os_info,
             "is_root": self.is_root,
+            "capabilities": list(self.capabilities),
             "tool_binary": capability.tool_binary,
         }
 
@@ -40,8 +52,9 @@ class CapabilityChecker:
             return False, f"Tool '{capability.tool_binary}' not found", details
 
         # Privileges
-        if "root" in capability.requirements.privileges and not self.is_root:
-            return False, "Root privileges required", details
+        privileges_ok, privilege_reason = satisfies_privileges(capability.requirements.privileges)
+        if not privileges_ok:
+            return False, privilege_reason, details
 
         # Interface
         if capability.requirements.interface_required:

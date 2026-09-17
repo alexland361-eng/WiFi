@@ -19,7 +19,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..models.capability import ToolCapabilityMetadata
 from ..models.evidence import Evidence, EvidenceType
-from ...utils.system import check_interface_exists, check_tool_available, get_os_info, is_root, run_command
+from ...utils.system import (
+    check_interface_exists,
+    check_tool_available,
+    get_os_info,
+    run_command,
+    satisfies_privileges,
+)
 from ...utils.validation import validate_interface, validate_parameters
 
 
@@ -110,10 +116,12 @@ class ToolAdapterBase(ABC):
             if not check_interface_exists(interface):
                 return False, f"Interface '{interface}' does not exist"
 
-        # Check privileges
-        if "root" in self.metadata.requirements.privileges:
-            if not is_root():
-                return False, "Root privileges required but not running as root"
+        # Check privileges. ``root`` keeps its strict meaning; fine-grained
+        # ``cap_*`` tokens are evaluated against the process's effective capability
+        # set, and an unrecognised token refuses rather than passing.
+        privileges_ok, privilege_reason = satisfies_privileges(self.metadata.requirements.privileges)
+        if not privileges_ok:
+            return False, privilege_reason
 
         # Check dependencies
         for dep in self.metadata.requirements.dependencies:

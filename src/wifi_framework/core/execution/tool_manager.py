@@ -21,7 +21,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...utils.system import check_tool_available, get_os_info, is_root, run_command, get_interface_list, check_interface_exists
+from ...utils.system import (
+    check_interface_exists,
+    check_tool_available,
+    effective_capabilities,
+    get_interface_list,
+    get_os_info,
+    is_root,
+    run_command,
+)
 from ..models.capability import ToolCapabilityMetadata
 from .registry import CapabilityRegistry
 
@@ -133,6 +141,25 @@ class ToolManager:
         self.interface_cache: Dict[str, InterfaceCapability] = {}
         self.os_info = get_os_info()
         self.is_root = is_root()
+        #: Capabilities actually held, sorted for a stable audit record. Root
+        #: implies the full set; an unprivileged process with CAP_NET_ADMIN and
+        #: CAP_NET_RAW can still administer and inject on wireless interfaces, and
+        #: ``is_root`` alone reported that process as unable to do anything.
+        self.capabilities: List[str] = sorted(effective_capabilities())
+
+    def holds_capabilities(self, *names: str) -> bool:
+        """Whether this process holds every named capability.
+
+        A root process holds the full effective set, so ``is_root`` short-circuits.
+        That is not just a convenience: ``self.capabilities`` is read once at
+        construction, so a manager built in an unprivileged process and later marked
+        as root - as the interface-manager tests do - would otherwise report an
+        empty capability set for a process that in reality has all of them.
+        """
+        if self.is_root:
+            return True
+        held = set(self.capabilities)
+        return all(name in held for name in names)
 
     def check_tool_deep(self, binary: str, force: bool = False) -> ToolInfo:
         """Deep check tool availability, version, dependencies, operational."""
@@ -279,9 +306,16 @@ class ToolManager:
         except Exception as exc:
             cap.discovery_errors.append(f"iw list: {type(exc).__name__}: {exc}")
 
-        # Check injection support via aireplay-ng --test (requires root and monitor mode)
-        # Only test if interface is monitor and root
-        if cap.type == "monitor" and self.is_root and cap.supports_monitor:
+        # Check injection support via aireplay-ng --test. This needs CAP_NET_RAW to
+        # open the raw socket and CAP_NET_ADMIN to transmit on the interface - not
+        # full root. Gating on is_root skipped the probe for an unprivileged process
+        # that was in fact permitted to run it, so injection support stayed unknown
+        # and every packet-injection capability looked unavailable.
+        if (
+            cap.type == "monitor"
+            and cap.supports_monitor
+            and self.holds_capabilities("cap_net_admin", "cap_net_raw")
+        ):
             try:
                 # Check if aireplay-ng exists
                 tool_info = self.check_tool_deep("aireplay-ng")
@@ -459,6 +493,7 @@ class ToolManager:
         return {
             "os_info": self.os_info,
             "is_root": self.is_root,
+            "capabilities": list(self.capabilities),
             "tools_cached": len(self.tool_cache),
             "interfaces_cached": len(self.interface_cache),
             "tools": {binary: {"available": info.available, "path": info.path, "version": info.version_raw, "operational": info.operational} for binary, info in self.tool_cache.items()},
