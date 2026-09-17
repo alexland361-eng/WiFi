@@ -29,8 +29,9 @@ import re
 import shutil
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # Allow running from a source checkout without installation.
 _SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
@@ -500,15 +501,24 @@ def main() -> int:
     print(f"original state: {original}\n")
 
     report = Report()
-    try:
-        check_list_interfaces(im, iface, report)
-        check_get_interface_info(im, iface, report)
-        check_rejects_absent_interface(im, report)
-        check_up_down(im, iface, report)
-        check_rfkill(im, report)
-        check_change_mac(im, iface, report)
-        check_monitor(im, iface, report)
 
+    def run_check(name: str, fn: Callable[[], None]) -> None:
+        """Run one check, recording a crash as a failure instead of aborting.
+
+        A harness that stops at the first exception reports only the checks that
+        happened to come before it, which hides both later defects and the crash
+        itself.
+        """
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 - isolation is the point
+            tb = traceback.format_exc(limit=8)
+            print(f"  [ERROR] {name} raised {type(exc).__name__}: {exc}")
+            print(tb)
+            annotate("error", f"check crashed - {name}", f"{type(exc).__name__}: {exc}")
+            report.record(f"{name} raised {type(exc).__name__}", False, str(exc)[:300])
+
+    def note_monitor_interface() -> None:
         # Record which interface monitor mode landed on, for teardown.
         for candidate in [c for c in os.listdir("/sys/class/net") if c.endswith("mon")]:
             original["mon_created"] = candidate
@@ -516,9 +526,22 @@ def main() -> int:
         if original["mon_created"] is None and truth_type(iface) == "monitor":
             original["mon_created"] = iface
 
-        check_channel(im, iface, report)
+    try:
+        run_check("list_interfaces", lambda: check_list_interfaces(im, iface, report))
+        run_check("get_interface_info", lambda: check_get_interface_info(im, iface, report))
+        run_check("rejects_absent_interface", lambda: check_rejects_absent_interface(im, report))
+        run_check("up_down", lambda: check_up_down(im, iface, report))
+        run_check("rfkill", lambda: check_rfkill(im, report))
+        run_check("change_mac", lambda: check_change_mac(im, iface, report))
+        run_check("monitor", lambda: check_monitor(im, iface, report))
+        run_check("note_monitor_interface", note_monitor_interface)
+        run_check("channel", lambda: check_channel(im, iface, report))
     finally:
-        restore(iface, original)
+        try:
+            restore(iface, original)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [ERROR] restore failed: {type(exc).__name__}: {exc}")
+            annotate("error", "state restoration failed", f"{type(exc).__name__}: {exc}")
 
     passed = sum(1 for r in report.results if r.passed)
     failed = [r for r in report.results if not r.passed]
@@ -526,6 +549,9 @@ def main() -> int:
     print("\n" + "=" * 72)
     print(f"RESULT: {passed}/{len(report.results)} checks passed against a real radio")
     print("=" * 72)
+    tally = " ".join(("P" if r.passed else "F") + ":" + r.name for r in report.results)
+    print(f"\ncheck tally:\n  {tally}")
+    annotate("notice", "checks-run", tally)
     annotate(
         "notice" if not failed else "error",
         "verification-result",
