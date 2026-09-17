@@ -60,6 +60,7 @@ class InterfaceCapability:
     current_channel: Optional[int] = None
     mac: Optional[str] = None
     type: str = "unknown"
+    last_checked: float = field(default_factory=time.time)
 
 
 class ToolManager:
@@ -188,30 +189,35 @@ class ToolManager:
         except Exception:
             pass
 
-        # Check monitor support via iw list or iw phy
+        # Detect the interface type and current channel from the interface
+        # itself. This used to live in an `else` branch that only ran when
+        # `iw list` FAILED, so on every working system the type kept its
+        # "unknown" default -- which also disabled the injection probe below,
+        # whose guard is `cap.type == "monitor"`.
         try:
-            # Try iw list
+            exit_code2, stdout2, stderr2, _ = run_command(["iw", "dev", interface, "info"], timeout=3)
+            if exit_code2 == 0:
+                m = re.search(r"^\s*type\s+(\S+)", stdout2, re.MULTILINE)
+                if m:
+                    cap.type = m.group(1)
+                    if cap.type == "monitor":
+                        cap.supports_monitor = True
+                # Check channel
+                m = re.search(r"channel\s+(\d+)", stdout2)
+                if m:
+                    try:
+                        cap.current_channel = int(m.group(1))
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+
+        # Check monitor support via iw list (phy-wide "Supported interface modes")
+        try:
             exit_code, stdout, stderr, _ = run_command(["iw", "list"], timeout=5)
             if exit_code == 0:
-                # Look for monitor in Supported interface modes
                 if "* monitor" in stdout:
                     cap.supports_monitor = True
-            else:
-                # Try iw dev <iface> info
-                exit_code2, stdout2, stderr2, _ = run_command(["iw", "dev", interface, "info"], timeout=3)
-                if exit_code2 == 0:
-                    if "type monitor" in stdout2:
-                        cap.type = "monitor"
-                        cap.supports_monitor = True
-                    elif "type managed" in stdout2:
-                        cap.type = "managed"
-                    # Check channel
-                    m = re.search(r"channel\s+(\d+)", stdout2)
-                    if m:
-                        try:
-                            cap.current_channel = int(m.group(1))
-                        except ValueError:
-                            pass
         except Exception:
             pass
 

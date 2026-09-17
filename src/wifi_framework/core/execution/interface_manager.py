@@ -273,24 +273,50 @@ class InterfaceManager:
             return False, f"Failed to unblock rfkill: {stderr} {stderr2}"
 
     def get_supported_channels(self, interface: str) -> List[int]:
-        """Get supported channels via iw list."""
-        channels = []
+        """Get channels supported by the phy that owns this interface.
+
+        `iw list` prints one block per phy, so parsing the whole output merges
+        the channels of every radio in the system and answers a question about
+        `interface` with data that may not apply to it. Restrict to the owning
+        phy, and exclude channels the driver reports as disabled.
+        """
+        channels: List[int] = []
 
         try:
-            exit_code, stdout, stderr, _ = run_command(["iw", "list"], timeout=5)
-            if exit_code == 0:
-                # Parse frequencies and channels
+            # 5s was too tight on a busy runner with several radios.
+            exit_code, stdout, stderr, _ = run_command(["iw", "list"], timeout=15)
+            if exit_code != 0:
+                return []
+
+            block = self._phy_block_for(stdout, interface)
+            for line in block.splitlines():
                 # Example: * 2412 MHz [1] (20.0 dBm)
-                for line in stdout.splitlines():
-                    m = re.search(r"\* \d+ MHz \[(\d+)\]", line)
-                    if m:
-                        try:
-                            ch = int(m.group(1))
-                            if ch not in channels:
-                                channels.append(ch)
-                        except ValueError:
-                            pass
+                #          * 5745 MHz [149] (disabled)
+                m = re.search(r"\*\s+(\d+)\s+MHz\s+\[(\d+)\]", line)
+                if not m:
+                    continue
+                if "disabled" in line:
+                    continue
+                try:
+                    ch = int(m.group(2))
+                except ValueError:
+                    continue
+                if ch not in channels:
+                    channels.append(ch)
         except Exception:
             pass
 
         return sorted(channels)
+
+    @staticmethod
+    def _phy_block_for(iw_list_output: str, interface: str) -> str:
+        """Return the `iw list` block for the phy owning `interface`.
+
+        Falls back to the whole output when the interface cannot be located, so
+        a partial answer is still returned rather than nothing.
+        """
+        blocks = re.split(r"(?m)^(?=phy#)", iw_list_output)
+        for block in blocks:
+            if re.search(rf"(?m)^\s*Interface\s+{re.escape(interface)}\s*$", block):
+                return block
+        return iw_list_output

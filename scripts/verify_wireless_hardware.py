@@ -290,12 +290,29 @@ def check_change_mac(im, iface: str, report: Report) -> None:
 
 
 def check_channel(im, iface: str, report: Report) -> None:
+    # Channel control is a monitor-mode operation: on a managed interface
+    # cfg80211 ties the channel to the associated BSS and refuses to set it.
+    # The interface must also be up, or `iw dev <if> info` reports no channel
+    # and a genuine success would read back as None.
+    im.set_interface_up(iface)
+    mode = truth_type(iface)
+    print(f"  (channel checks against {iface} in {mode!r} mode, up={truth_is_up(iface)})")
+
     supported = im.get_supported_channels(iface)
     report.record(
         "get_supported_channels returns channels",
         bool(supported),
         f"returned {supported[:12]}{'...' if len(supported) > 12 else ''} ({len(supported)} total)",
     )
+    if not supported:
+        # Distinguish "the parser missed them" from "iw list produced nothing".
+        rc, out, err = sh(["iw", "list"])
+        sample = " | ".join((out or err).splitlines()[:6])
+        annotate(
+            "error",
+            "iw-list-diagnostic",
+            f"get_supported_channels returned [] ; iw list rc={rc} first lines: {sample[:600]}",
+        )
 
     # Channels 1, 6 and 11 are always valid 2.4 GHz; hwsim supports them.
     for channel in (1, 6, 11):
@@ -304,13 +321,14 @@ def check_channel(im, iface: str, report: Report) -> None:
         report.record(
             f"set_channel({channel}) takes effect",
             ok is True and observed == channel,
-            f"returned ({ok}, {msg!r})",
+            f"returned ({ok}, {msg!r}) in mode {mode!r}",
             claimed=f"success={ok} message={msg!r}",
             observed=f"kernel channel={observed}",
         )
 
 
-def check_monitor(im, iface: str, report: Report) -> None:
+def check_monitor(im, iface: str, report: Report) -> str:
+    """Enter monitor mode and verify it. Returns the monitor interface name."""
     ok, msg, mon_iface = im.create_monitor_interface(iface)
 
     # Monitor mode may land on a new interface (airmon-ng) or on the original (iw).
@@ -333,6 +351,8 @@ def check_monitor(im, iface: str, report: Report) -> None:
         ),
     )
 
+    target = monitor_found or mon_iface or iface
+
     # A monitor interface must now be detectable as such by the framework.
     if monitor_found:
         info = im.get_interface_info(monitor_found)
@@ -345,7 +365,10 @@ def check_monitor(im, iface: str, report: Report) -> None:
             observed=f"kernel type={truth_type(monitor_found)!r}",
         )
 
-    target = mon_iface or iface
+    return target
+
+
+def check_monitor_teardown(im, target: str, iface: str, report: Report) -> None:
     ok, msg = im.remove_monitor_interface(target, iface)
     still_monitor = truth_type(target) == "monitor"
     report.record(
@@ -526,6 +549,20 @@ def main() -> int:
         if original["mon_created"] is None and truth_type(iface) == "monitor":
             original["mon_created"] = iface
 
+    monitor_target = {"iface": iface}
+
+    def do_monitor() -> None:
+        monitor_target["iface"] = check_monitor(im, iface, report)
+
+    def do_channel() -> None:
+        # Runs while still in monitor mode: channel control is rejected on a
+        # managed interface, so testing it after teardown measures nothing.
+        check_channel(im, monitor_target["iface"], report)
+
+    def do_teardown() -> None:
+        note_monitor_interface()
+        check_monitor_teardown(im, monitor_target["iface"], iface, report)
+
     try:
         run_check("list_interfaces", lambda: check_list_interfaces(im, iface, report))
         run_check("get_interface_info", lambda: check_get_interface_info(im, iface, report))
@@ -533,9 +570,9 @@ def main() -> int:
         run_check("up_down", lambda: check_up_down(im, iface, report))
         run_check("rfkill", lambda: check_rfkill(im, report))
         run_check("change_mac", lambda: check_change_mac(im, iface, report))
-        run_check("monitor", lambda: check_monitor(im, iface, report))
-        run_check("note_monitor_interface", note_monitor_interface)
-        run_check("channel", lambda: check_channel(im, iface, report))
+        run_check("monitor", do_monitor)
+        run_check("channel", do_channel)
+        run_check("monitor_teardown", do_teardown)
     finally:
         try:
             restore(iface, original)
