@@ -544,18 +544,20 @@ class AssessmentEngine:
 
 ## Testing
 
-224 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+242 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
 `pyproject.toml`, so no install step is needed):
 
-| Suite | Covers |
-|---|---|
-| `test_contracts.py` | Envelope, both wire forms, version negotiation, digests, every semantic rule |
-| `test_policy.py` | Scope / capability / parameter stages, fail-closed invasiveness, refusals |
-| `test_evidence_engine.py` | Provenance, scope tagging, verification-request generation, no fabrication |
-| `test_verification_engine.py` | Noisy-OR aggregation, all six verification states, freshness, contradiction |
-| `test_world_state.py` | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
-| `test_contract_pipeline.py` | The full loop against a **real subprocess** (stub binaries on `PATH`) |
-| `test_adapters/executor/models/parsers/planner/scope.py` | Pre-0.4.0 suites, unmodified |
+| Suite | Tests | Covers |
+|---|---|---|
+| `test_contracts.py` | 49 | Envelope, both wire forms, version negotiation, digests, every semantic rule |
+| `test_world_state.py` | 34 | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
+| `test_policy.py` | 30 | Scope / capability / parameter stages, fail-closed invasiveness, refusals |
+| `test_verification_engine.py` | 29 | Noisy-OR aggregation, all six verification states, freshness, contradiction |
+| `test_evidence_engine.py` | 28 | Provenance, scope tagging, verification-request generation, no fabrication |
+| `test_contract_pipeline.py` | 25 | The full loop against a **real subprocess** (stub binaries on `PATH`) |
+| `test_audit.py` | 18 | Contract trail, refusal logging, and the correlation chain reaching findings |
+| `test_scope.py` | 8 | Pre-0.4.0 scope tests plus 5 additive regressions for the scope fix |
+| `test_models/parsers/adapters/planner/executor.py` | 21 | Pre-0.4.0 suites, unmodified |
 
 The integration suite puts stub binaries on `PATH` and drives the production adapters, parsers,
 gateway and policy through real `subprocess` calls. Stubs record their own invocations, which lets

@@ -323,11 +323,15 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 224 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 242 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
-- New suites: `test_contracts.py` (49), `test_policy.py` (30), `test_evidence_engine.py` (28),
-  `test_verification_engine.py` (29), `test_world_state.py` (34), `test_contract_pipeline.py` (23)
+- New suites: `test_contracts.py` (49), `test_policy.py` (30), `test_world_state.py` (34),
+  `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
+  `test_contract_pipeline.py` (25), `test_audit.py` (18)
+- `test_audit.py` proves the M6 acceptance criterion directly: the correlation chain reaches
+  `finding_ids` and `verification_ids` for every finding, findings from other executions are not
+  falsely linked, and an unattributed execution stays honestly unattributed
 - `test_contract_pipeline.py` drives the **production** adapters, parsers, gateway and policy
   through real `subprocess` calls against stub binaries on `PATH`, covering success, non-zero
   exit, permission failure, timeout, malformed output, missing tool, scope refusal, unsafe
