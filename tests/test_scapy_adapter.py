@@ -281,3 +281,51 @@ def test_a_capture_failure_is_reported_not_swallowed(adapter):
 def test_the_adapter_is_registered_and_reachable(adapter):
     assert isinstance(adapter, ScapyAdapter)
     assert ALLOWED_OPERATIONS
+
+
+# --------------------------------------------------------------------------
+# Validation order: the error contract must not depend on the environment
+# --------------------------------------------------------------------------
+
+
+def test_the_input_contract_is_checked_before_the_environment_probe(adapter, monkeypatch):
+    """With Scapy absent *and* no interface, the interface error must win.
+
+    Otherwise the failure reason depends on whether an optional extra happens to
+    be installed. That is how two tests in this file came to fail under a plain
+    ``pip install -e .`` while passing wherever scapy was present: the request was
+    malformed, but the reported reason was the missing library.
+    """
+    import wifi_framework.tools.adapters.protocol.scapy_adapter as mod
+
+    monkeypatch.setattr(mod, "find_spec", lambda _name: None)
+
+    ok, reason = adapter.custom_requirement_check(None, {"operation": "sniff"})
+
+    assert ok is False
+    assert "interface" in reason
+    assert "not importable" not in reason
+
+
+def test_a_missing_library_is_still_reported_for_a_well_formed_request(adapter, monkeypatch):
+    """Reordering must not hide a genuinely absent dependency."""
+    import wifi_framework.tools.adapters.protocol.scapy_adapter as mod
+
+    monkeypatch.setattr(mod, "find_spec", lambda _name: None)
+
+    ok, reason = adapter.custom_requirement_check("wlan0", {"operation": "sniff"})
+
+    assert ok is False
+    assert "not importable" in reason
+
+
+def test_execute_reports_the_interface_error_without_scapy_installed(adapter, monkeypatch):
+    """The end-to-end path, in the environment where this used to fail."""
+    import wifi_framework.tools.adapters.protocol.scapy_adapter as mod
+
+    monkeypatch.setattr(mod, "find_spec", lambda _name: None)
+
+    result = adapter.execute(interface=None, parameters={"operation": "sniff"}, timeout=20)
+
+    assert result.success is False
+    assert "interface" in (result.failure_reason or "")

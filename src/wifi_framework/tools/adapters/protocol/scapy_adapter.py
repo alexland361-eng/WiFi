@@ -74,13 +74,19 @@ class ScapyAdapter(ToolAdapterBase):
         itself unavailable even with Scapy installed. Detect it properly here.
         """
         parameters = parameters or {}
+
+        # Input contract before environment probe. Whether Scapy happens to be
+        # installed must not change which error a malformed request receives, or
+        # the failure reason depends on the machine the suite runs on: with Scapy
+        # absent, a sniff request with no interface used to report "Scapy library
+        # is not importable" instead of the interface error, which made two tests
+        # fail on any environment without the optional extra.
+        operation = parameters.get("operation", "version")
+        if operation == "sniff" and not interface:
+            return False, "operation 'sniff' requires an interface"
+
         if find_spec("scapy") is None:
             return False, "Scapy library is not importable"
-
-        operation = parameters.get("operation", "version")
-        if operation == "sniff":
-            if not interface:
-                return False, "operation 'sniff' requires an interface"
         return True, ""
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:

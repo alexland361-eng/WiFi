@@ -658,3 +658,125 @@ def test_run_command_takes_an_argv_list_not_a_string():
 
     signature = inspect.signature(run_command)
     assert signature.parameters["cmd"].annotation in ("list[str]", list)
+
+
+# --------------------------------------------------------------------------
+# Interface names are validated on the way in, for every adapter
+# --------------------------------------------------------------------------
+
+
+def test_a_supplied_interface_is_validated_even_when_the_capability_does_not_require_one():
+    """``interface_required=False`` must not mean "do not validate".
+
+    The interface name is interpolated into argv and into ``/sys/class/net/<name>``
+    paths. ``check_requirements`` only validated it when the capability declared an
+    interface mandatory, so an adapter with ``interface_required=False`` handed an
+    unchecked name straight to ``build_command`` and then ran it.
+
+    The stub below uses ``echo``, which exists everywhere, so a validation gap is
+    observable rather than masked by a missing tool: without the base-class check the
+    call succeeds and the poisoned name is echoed back.
+
+    This is defence in depth, not a live exploit: argv is a list and nothing in
+    ``src/`` uses ``shell=True``, so a ``;`` reaches the tool as a literal character,
+    and ``ActionPolicy`` already validates ``interface`` before dispatch.
+    """
+    from typing import Any, Dict, List
+
+    from wifi_framework.core.execution.adapter_base import ToolAdapterBase
+    from wifi_framework.core.models.capability import (
+        CapabilityRequirements,
+        OperatingSystem,
+        ToolCapabilityMetadata,
+    )
+    from wifi_framework.core.models.evidence import Evidence
+
+    class _EchoInterfaceAdapter(ToolAdapterBase):
+        def build_command(self, interface, parameters) -> List[str]:
+            return ["echo", interface]
+
+        def parse_output(self, raw_output, error_output, exit_code, parameters, interface) -> List[Evidence]:
+            return []
+
+    adapter = _EchoInterfaceAdapter(
+        ToolCapabilityMetadata(
+            name="echo_iface_probe",
+            display_name="Echo interface probe",
+            category=None,
+            description="test stub",
+            tool_binary="echo",
+            requirements=CapabilityRequirements(
+                operating_systems=[OperatingSystem.LINUX],
+                interface_required=False,
+            ),
+        )
+    )
+
+    poison = "wlan0; touch /tmp/adapter_base_poison"
+    result = adapter.execute(interface=poison, parameters={}, timeout=10)
+
+    assert result.success is False, (
+        "the poisoned interface reached execution: "
+        f"reason={result.failure_reason!r} output={result.raw_output!r}"
+    )
+    assert "Interface validation failed" in (result.failure_reason or "")
+    assert not (result.raw_command or ""), "the command must never be built"
+
+
+def test_a_traversal_interface_name_is_refused_before_a_command_is_built():
+    """``../../etc/passwd`` must never reach an argv or a /sys path."""
+    from typing import List
+
+    from wifi_framework.core.execution.adapter_base import ToolAdapterBase
+    from wifi_framework.core.models.capability import (
+        CapabilityRequirements,
+        OperatingSystem,
+        ToolCapabilityMetadata,
+    )
+    from wifi_framework.core.models.evidence import Evidence
+
+    class _EchoInterfaceAdapter(ToolAdapterBase):
+        def build_command(self, interface, parameters) -> List[str]:
+            return ["echo", interface]
+
+        def parse_output(self, raw_output, error_output, exit_code, parameters, interface) -> List[Evidence]:
+            return []
+
+    adapter = _EchoInterfaceAdapter(
+        ToolCapabilityMetadata(
+            name="echo_iface_probe_2",
+            display_name="Echo interface probe",
+            category=None,
+            description="test stub",
+            tool_binary="echo",
+            requirements=CapabilityRequirements(
+                operating_systems=[OperatingSystem.LINUX],
+                interface_required=False,
+            ),
+        )
+    )
+
+    for bad in ("../../etc/passwd", "wlan0\n", "wlan0 && id", "$(id)", "a" * 300):
+        result = adapter.execute(interface=bad, parameters={}, timeout=10)
+        assert result.success is False, f"{bad!r} was accepted"
+        assert "Interface validation failed" in (result.failure_reason or ""), f"{bad!r}: {result.failure_reason!r}"
+
+
+def test_no_real_adapter_lets_a_poisoned_interface_reach_its_command_line():
+    """Sweep every registered adapter as a backstop to the stub tests above."""
+    from wifi_framework.core.execution.registry import CapabilityRegistry
+    from wifi_framework.tools.registry_loader import load_all_adapters
+
+    registry = load_all_adapters(CapabilityRegistry())
+    poison = "wlan0; touch /tmp/adapter_sweep_poison"
+
+    leaked = []
+    for name in registry.list_capabilities():
+        adapter = registry.get_adapter_instance(name)
+        if adapter is None:
+            continue
+        result = adapter.execute(interface=poison, parameters={}, timeout=5)
+        if poison in (getattr(result, "raw_command", "") or ""):
+            leaked.append(name)
+
+    assert not leaked, f"poisoned interface reached argv for: {leaked}"

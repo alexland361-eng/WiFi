@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..models.capability import ToolCapabilityMetadata
 from ..models.evidence import Evidence, EvidenceType
 from ...utils.system import check_interface_exists, check_tool_available, get_os_info, is_root, run_command
-from ...utils.validation import validate_parameters
+from ...utils.validation import validate_interface, validate_parameters
 
 
 class AdapterExecutionResult:
@@ -179,6 +179,29 @@ class ToolAdapterBase(ABC):
                 raw_output="",
                 error_output="; ".join(errors),
             )
+
+        # Validate the interface name whenever one is supplied, not only when the
+        # capability declares an interface mandatory. The name is interpolated into
+        # argv and into /sys/class/net/<name> paths, so an unchecked value is a
+        # traversal and argument-smuggling risk. Capabilities with
+        # interface_required=False still accept an interface argument and hand it
+        # straight to build_command, which previously left it unvalidated.
+        #
+        # This is defence in depth rather than a live exploit: argv is a list and
+        # nothing in src/ uses shell=True, so a ';' reaches the tool as a literal
+        # character. ActionPolicy also validates `interface` before dispatch, so
+        # the policy-gated path was already covered - but an adapter invoked
+        # directly was not, and the base class is the one place that covers all of
+        # them.
+        if interface:
+            iface_ok, iface_reason = validate_interface(interface)
+            if not iface_ok:
+                return AdapterExecutionResult(
+                    success=False,
+                    failure_reason=f"Interface validation failed: {iface_reason}",
+                    raw_output="",
+                    error_output=iface_reason,
+                )
 
         # Check requirements
         req_ok, req_reason = self.check_requirements(interface, parameters)
