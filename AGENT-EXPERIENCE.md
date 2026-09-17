@@ -734,3 +734,123 @@ physical driver, chipset quirks, or capture under real conditions. `supports_inj
 - [x] The verification script also runs by hand on a Kali box with a physical adapter, fails loudly
       when no radio exists, and restores original interface state
 - [x] All work on `arena/01a0ab79-wifi`; **not merged**
+
+## Session: 2026-09-17 - Scapy Adapter Security Defect and Injection Verification (v0.5.0)
+
+### Context
+- Follow-up to the hwsim hardware verification session (v0.4.1).
+- Two goals: eliminate an arbitrary code-execution path in `ScapyAdapter`, and prove the framework
+  can actually transmit and receive 802.11 frames rather than only change interface state.
+- Result: CI run 35201134582 fully green — 471/471 unit tests on three Pythons, 17/17
+  `InterfaceManager` checks, 12/12 capture/injection checks against real radios.
+
+### Challenges Encountered
+
+#### 1. `exec()` on caller-supplied data was reachable through the normal capability path
+**Challenge**: `ScapyAdapter` built a Python snippet from request parameters and `exec()`-ed it.
+Any caller able to influence adapter parameters could run arbitrary code with the framework's
+privileges — root, during a wireless assessment. It was not a theoretical concern: the capability
+registry exposes adapters to the decision engine by design.
+
+**Approach**: Replaced the escape hatch with a bounded declarative operation set (`version`,
+`sniff`). Code-carrying parameter names are rejected outright rather than sanitised — sanitising
+Python source is not a solvable problem, and a denylist of dangerous constructs invites the next
+bypass. Validation now runs *before* any Scapy import, so a refused request has zero side effects.
+
+**Learning**: A framework whose whole purpose is executing privileged operations cannot also offer
+"run whatever the caller sent". The flexibility was the vulnerability. Bounding the operation set
+removed almost no real capability, because every legitimate use was already expressible as
+parameters.
+
+#### 2. `ModuleNotFoundError` is an `ImportError` subclass — a broad catch hid the real defect
+**Challenge**: The adapter always reported "Requirements not met" and the success path looked
+unreachable. The obvious reading — Scapy not installed — was wrong; Scapy imported fine.
+
+**Diagnosis**: `from ...execution.adapter_base` used one `.` too many, resolving to
+`wifi_framework.tools.execution` instead of `wifi_framework.core.execution`. That raised
+`ModuleNotFoundError`, which *is* an `ImportError`, so a broad `except ImportError` intended for
+the optional-dependency case swallowed it and fell through to the base-class path — which looks for
+a `scapy` **binary** on `PATH` and never finds one.
+
+**Learning**: `except ImportError` around an optional dependency catches typos, wrong import depth
+and genuine missing packages identically. It converts a programming error into a plausible-looking
+environmental one, which is the worst failure mode to debug. Catch narrowly, or log the actual
+exception rather than assuming its cause. All imports in the module are now absolute, so depth
+cannot silently drift again.
+
+#### 3. A library was modelled as a binary dependency
+**Challenge**: `dependencies=["scapy"]` was checked with `check_tool_available`, which probes
+executables on `PATH`. A Python library can never satisfy that, so the check failed unconditionally
+— a second, independent reason the adapter could never succeed.
+
+**Learning**: The dependency metadata has an implicit contract (names of binaries) that nothing
+enforced. `custom_requirement_check` now uses `importlib.util.find_spec`. Worth asking of any
+capability model: does the validation actually match the kind of thing being declared?
+
+#### 4. Verifying an oracle against an idle medium proves nothing
+**Challenge**: The independent raw-socket capture reported 0 frames while the framework's adapter
+reported 12. The natural conclusion — the framework is lying — was wrong; my oracle was broken.
+After fixing the socket setup, a re-test *also* returned 0 frames, which looked like the fix had
+failed.
+
+**Diagnosis**: Two separate problems. (a) The socket used `SOCK_DGRAM` with protocol `0`.
+`AF_PACKET` needs `ETH_P_ALL` to deliver anything at all, and monitor-mode frames arrive prefixed
+with a radiotap header that `SOCK_DGRAM` would try and fail to strip. (b) The re-test ran against
+a quiet network, so there was simply nothing to capture. Re-running with traffic generated *during*
+the capture window gave 37 frames over 4404 bytes.
+
+**Learning**: This nearly caused a correct fix to be reverted. A capture oracle tested against an
+idle medium returns 0 whether it works or not — the result carries no information. Any test of a
+receiver must generate its own stimulus, or the negative result is uninterpretable. The same
+discipline applies to the hardware run: the marker is injected by the test itself, so a 0-frame
+result means the path is broken, not that the air was quiet.
+
+#### 5. Cross-checking the code under test caught my own bug, not the framework's
+**Observation**: The adapter/independent-capture cross-check was designed to catch an adapter
+reporting frames the medium never carried. In practice it fired on a defect in the *checker*. That
+is still a good outcome — the inconsistency was real and surfaced immediately — but it is a
+reminder that an oracle is code too, and needs its own verification before its verdicts are
+trusted.
+
+**Learning**: When a cross-check fails, determine which side is wrong before "fixing" either. Here
+the framework was right and the harness was wrong; patching the framework would have broken working
+code to satisfy a broken test.
+
+#### 6. Wrong Scapy import path stopped the whole injection test
+**Challenge**: CI reported `ImportError: cannot import name 'RadioTap' from 'scapy.layers.l2'`, so
+0/12 frames were injected and every downstream check failed for one reason.
+
+**Approach**: `RadioTap` lives in `scapy.layers.dot11`. Scapy was already installed locally, so the
+exact error was reproduced and the corrected path verified — building the real 53-byte probe
+request and confirming the marker was findable in its bytes — before spending another CI cycle.
+
+**Learning**: The first hand-packed vendor-IE construction also had the element length wrong
+(accounted for the OUI but not the type byte or sequence number), and LLC/SNAP framing does not
+belong in a probe request. Using a well-formed frame with the marker as the SSID is both more
+likely to be accepted by a driver and trivially identifiable in a raw capture. Prefer constructing
+protocol data with the library's own layer classes over manual `struct.pack` byte assembly.
+
+#### 7. A repository-wide AST sweep as a regression guard
+**Challenge**: Fixing one `exec()` call does not prevent the next one.
+
+**Approach**: `test_no_module_executes_caller_supplied_code` walks every module under `src/` with
+`ast` and fails if a bare `exec`, `eval` or `compile` call appears. Proven by temporarily
+reintroducing `exec(s)` — the sweep caught it and reported file and line.
+
+**Learning**: Security properties that must hold everywhere are better expressed as a test over the
+whole tree than as a review habit. It costs milliseconds and converts "remember not to" into a
+failing build.
+
+### Environment Constraints (confirmed, not assumed)
+- The dev sandbox cannot run any wireless verification: monolithic kernel, no wireless stack,
+  `mac80211_hwsim` impossible. CI is the only path.
+- `*.ngrok*` URLs are wildcard-sinkholed in the sandbox — DNS returns a catch-all pool for real and
+  impossible subdomains alike, TCP connects, TLS drops EOF. No tunnel will work; do not retry.
+  `gethostbyname` is unreliable for detecting this (returns one rotating IP); use `getaddrinfo` and
+  compare against a known-impossible subdomain.
+- CI job logs live on Azure blob storage and are unreachable from the sandbox. `::notice`/`::error`
+  annotations are readable via
+  `gh api repos/{owner}/{repo}/check-runs/{job_id}/annotations`, which is why every verification
+  script emits its results that way.
+- `scapy.all.__version__` does not exist in Scapy 2.7; use `importlib.metadata.version("scapy")`.
+- `EvidenceType` has no `OBSERVATION` member; capture evidence is `EvidenceType.CAPTURE`.

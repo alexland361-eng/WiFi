@@ -598,11 +598,34 @@ cache raised `AttributeError` on every hit; interface type was detected only whe
 interface argument and counted disabled channels; and frequencies are printed with a decimal place
 by current `iw`, which the parser did not match.
 
-**What hwsim still does not verify.** A virtual radio exercises the software path - mode changes,
-MAC changes, channel setting, output parsing - but not RF behaviour, so these remain unverified:
+**Transmission and capture** are verified separately by `scripts/verify_scapy_capture.py`, because
+interface-state changes say nothing about whether the framework can actually put 802.11 frames on
+the medium and read them back. Two radios go into monitor mode on the same channel; twelve probe
+requests are injected from one and captured on the other, each carrying a unique per-run marker as
+its SSID.
 
-- **Packet injection.** `aireplay-ng --test` against a physical driver. hwsim accepts frames that
-  real chipsets reject, so `supports_injection` is not field-proven.
+The check is built so that it cannot pass by trusting the code it is testing. A **stdlib-only
+`AF_PACKET` socket** records raw bytes independently of Scapy and of the framework, and is searched
+for the marker - that is the evidence transmission traversed the medium. The framework's
+`ScapyAdapter` captures concurrently, and the two are cross-checked, so an adapter reporting frames
+the medium never carried fails the run. The 0.5.0 code-parameter refusal is re-run here as well,
+confirming the security boundary holds against real radios and not only in the unit suite.
+
+That cross-check earned its keep immediately: on the first hardware run the adapter reported 12
+captured frames while the independent socket reported zero. The framework was right and the oracle
+was wrong - the raw socket had been opened with `SOCK_DGRAM` and protocol `0`, which receives
+nothing, where `AF_PACKET` needs `SOCK_RAW` and `ETH_P_ALL` and monitor frames arrive with a
+radiotap header `SOCK_DGRAM` cannot strip. Had the harness been treated as authoritative, working
+framework code would have been "fixed" to satisfy a broken test.
+
+**What hwsim still does not verify.** A virtual radio exercises the software path - mode changes,
+MAC changes, channel setting, frame construction, transmission between two interfaces, raw capture,
+output parsing - but not RF behaviour, so these remain unverified:
+
+- **Injection against physical drivers.** `aireplay-ng --test` on real hardware. hwsim accepts
+  frames that real chipsets reject and forwards between radios on a shared channel regardless of
+  MAC address or association state, so `supports_injection` is not field-proven and no
+  authentication state machine is exercised.
 - **Chipset and driver quirks.** Firmware loading, USB power management, and the drivers that need
   `airmon-ng check kill` or refuse monitor mode while associated.
 - **Capture under real conditions.** Whether `airodump-ng`, `wash`, `reaver` and `hcxdumptool`

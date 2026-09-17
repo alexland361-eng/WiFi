@@ -552,6 +552,83 @@ where `iw` exists, and never parsed multi-radio output.
   cannot load a module at all, and `CONFIG_WIRELESS` unset besides. That is why verification moved to
   CI rather than being a local convenience.
 
+## [0.5.0] - 2026-09-17
+
+### Security
+- **`ScapyAdapter` no longer executes caller-supplied code.** The adapter previously
+  `exec()`-ed a `script` parameter built from request data, which made it an arbitrary
+  code-execution primitive reachable through the normal capability path — any caller able to
+  influence adapter parameters could run Python with the framework's privileges, including root
+  during a wireless assessment. Replaced with a bounded, declarative operation set (`version`,
+  `sniff`). `script`, `code`, `source`, `expr` and `lambda` parameters are now rejected with
+  `invalid_parameters` before any Scapy import, so a refused request has no side effects at all.
+  `build_command` returns a fixed argv and never interpolates caller data.
+- **Regression guard**: `tests/test_validation.py::test_no_module_executes_caller_supplied_code`
+  walks every module under `src/` with `ast` and fails the suite if any bare `exec`, `eval` or
+  `compile` call reappears. Verified by temporarily reintroducing one — the sweep caught it and
+  reported the file and line.
+- 51 new tests in `tests/test_scapy_adapter.py` pin the boundary: hostile payloads refused, no
+  side effects on refusal, `build_command` safety, parameter validation ranges, and the
+  requirement check.
+
+### Fixed
+- **Wrong relative-import depth in `ScapyAdapter`**: `from ...execution.adapter_base` resolved to
+  `wifi_framework.tools.execution` rather than `wifi_framework.core.execution`, raising
+  `ModuleNotFoundError`. Because that is an `ImportError` subclass, a broad `except ImportError`
+  misreported it as a missing optional dependency and fell through to the base-class path, which
+  looks for a `scapy` *binary* on `PATH`. The adapter's success path was therefore unreachable —
+  every call failed with "Requirements not met". All imports in the module are now absolute.
+- **Scapy modelled as a binary dependency**: `dependencies=["scapy"]` was checked with
+  `check_tool_available`, which probes executables on `PATH` and can never match a Python library.
+  Removed from metadata; `custom_requirement_check` now uses `importlib.util.find_spec("scapy")`.
+- **Version detection**: `scapy.all.__version__` does not exist in Scapy 2.7, so the adapter
+  reported `unknown`. Now read from `importlib.metadata`.
+
+### Added
+- **`scripts/verify_scapy_capture.py`** — proves the framework can actually put 802.11 frames on
+  the medium and read them back, which `InterfaceManager` verification does not cover. Two
+  `mac80211_hwsim` radios are placed in monitor mode on the same channel; 12 probe requests are
+  injected from one and captured on the other. Each run carries a unique marker as the SSID so
+  frames are unmistakably ours.
+  - Three *independent* captures, because the point is not to trust the code under test: a
+    stdlib-only `AF_PACKET` socket records raw bytes and is searched for the marker (this is what
+    proves transmission traversed the medium, sharing no code with Scapy or the framework); the
+    framework's `ScapyAdapter` runs concurrently and is checked on success, `frames_captured`,
+    recorded interface and evidence production; the two are cross-checked, so an adapter reporting
+    frames the medium never carried is a failure.
+  - Also re-runs the code-parameter refusal against real hardware, confirming the security fix
+    holds outside the unit suite.
+  - Fails loudly rather than vacuously if fewer than two radios exist — testing one radio against
+    itself would pass without proving anything.
+- CI runs the above in the `wireless verification` job and surfaces results as annotations
+  (`capture-injection-result`, `capture-failed-checks`), on the same reasoning as the
+  `InterfaceManager` run: job logs sit on Azure blob storage that is not reachable from the dev
+  sandbox, while annotations are.
+
+### Changed
+- CI installs the `full` extra in both jobs so Scapy-dependent tests and the capture verification
+  actually run instead of silently skipping.
+- Runtime dependencies are unchanged: `pyyaml` only. Scapy remains optional behind `full`.
+
+### Verification (CI run 35201134582, all jobs green)
+- Unit suite **471/471** on Python 3.10, 3.11 and 3.12 (was 419).
+- `InterfaceManager` against real radios: **17/17**.
+- Raw capture and frame injection against real radios: **12/12**, including
+  `raw AF_PACKET capture received traffic`, `injected marker arrived over the air`,
+  `marker received more than once (repeated transmission)`, `ScapyAdapter captured frames`,
+  `adapter capture is consistent with the independent capture`, and
+  `adapter still refuses a code parameter on real hardware`.
+
+### Known limitations
+- These are **virtual** radios. What is proven is the software path: monitor mode, 802.11 framing,
+  raw socket capture, transmission between two interfaces, and the adapter's contract. What is not
+  proven is anything physical — real RF propagation, chipset and driver injection limits, capture
+  under real-world noise, or behaviour against actual access points and clients. See
+  `docs/ARCHITECTURE.md`.
+- `hwsim` radios forward frames to each other on a shared channel regardless of the MAC addresses
+  used, so this verifies framing and the capture path, not association or authentication state
+  machines.
+
 ## [Unreleased]
 
 ### Planned

@@ -534,6 +534,25 @@ method that reports success without changing the radio fails the run. This is wh
 defects fixed in 0.4.1; see `docs/ARCHITECTURE.md` for what hwsim still cannot verify (injection
 against physical drivers, chipset quirks, capture under real conditions).
 
+A second hardware job proves the framework can put frames on the medium and read them back, which
+interface-state changes do not cover. `scripts/verify_scapy_capture.py` places two radios in monitor
+mode on the same channel, injects 12 probe requests from one and captures on the other, carrying a
+unique per-run marker as the SSID so the frames are unmistakably ours. It deliberately does **not**
+trust the code under test: a stdlib-only `AF_PACKET` socket records raw bytes independently of Scapy
+and of the framework, and is searched for the marker — that is what proves transmission actually
+traversed the medium. The framework's `ScapyAdapter` captures concurrently and the two results are
+cross-checked, so an adapter reporting frames the medium never carried is a failure. The same job
+re-runs the code-parameter refusal against real hardware, confirming the 0.5.0 security fix holds
+outside the unit suite.
+
+```bash
+sudo python3 scripts/verify_scapy_capture.py                       # first two radios
+sudo python3 scripts/verify_scapy_capture.py --capture wlan1 --inject wlan0
+```
+
+It needs two radios and fails loudly if fewer exist, rather than testing one radio against itself
+and passing without proving anything.
+
 The same script runs by hand on a Kali box with a physical adapter:
 
 ```bash
