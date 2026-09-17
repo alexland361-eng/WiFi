@@ -43,6 +43,53 @@ class ToolInfo:
     failure_reason: Optional[str] = None
 
 
+def _read_sysfs(path: str) -> str:
+    """Read a sysfs attribute, returning "" when it is absent or unreadable."""
+    try:
+        with open(path, "r", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def detect_chipset(interface: str, driver: Optional[str] = None) -> Optional[str]:
+    """Identify the underlying device from sysfs, falling back to the driver name.
+
+    ``ethtool -i`` reports ``bus-info`` as a *bus address* - ``usb001::003`` or
+    ``0000:03:00.0`` - not a chipset, so the branch that used to sit here with a
+    comment claiming it "often contains chipset hint" could not have delivered one.
+    The device identifiers under ``/sys/class/net/<if>/device`` can.
+
+    ``InterfaceCapability.chipset`` is consumed by the gateway, InterfaceManager,
+    the world-model publisher and the decision engine's state view, so leaving it
+    permanently ``None`` published an unknown chipset into every WorldState.
+
+    Returns a prefixed identifier so the consumer can tell how it was derived:
+    ``usb:<vendor>:<product>``, ``pci:<vendor>:<device>``, ``modalias:<value>``,
+    or the bare driver name when sysfs exposes nothing.
+    """
+    base = f"/sys/class/net/{interface}/device"
+    uevent = _read_sysfs(f"{base}/uevent")
+
+    match = re.search(r"^PRODUCT=([0-9a-fA-F]+)/([0-9a-fA-F]+)", uevent, re.MULTILINE)
+    if match:
+        return f"usb:{match.group(1)}:{match.group(2)}"
+
+    vendor, device = _read_sysfs(f"{base}/vendor"), _read_sysfs(f"{base}/device")
+    if vendor and device:
+        return f"pci:{vendor}:{device}"
+
+    match = re.search(r"^MODALIAS=(.+)$", uevent, re.MULTILINE)
+    if match:
+        return f"modalias:{match.group(1)}"
+
+    modalias = _read_sysfs(f"{base}/modalias")
+    if modalias:
+        return f"modalias:{modalias}"
+
+    return driver
+
+
 @dataclass
 class InterfaceCapability:
     """Deep interface capability after testing."""
@@ -59,8 +106,16 @@ class InterfaceCapability:
     channels: List[int] = field(default_factory=list)
     current_channel: Optional[int] = None
     mac: Optional[str] = None
+    #: Bus address from `ethtool -i` (usb001::003, 0000:03:00.0). Not a chipset.
+    bus_info: Optional[str] = None
     type: str = "unknown"
     last_checked: float = field(default_factory=time.time)
+    #: Probes that raised during discovery. Capability discovery is best-effort by
+    #: nature - a missing `ethtool` legitimately leaves `driver` unknown - but an
+    #: unknown value and a failed probe are different facts, and a framework whose
+    #: whole premise is distinguishing "not observed" from "observed absent" should
+    #: not collapse them silently.
+    discovery_errors: List[str] = field(default_factory=list)
 
 
 class ToolManager:
@@ -160,8 +215,8 @@ class ToolManager:
                 exit_code, stdout, stderr, _ = run_command(["ip", "link", "show", interface], timeout=3)
                 if exit_code == 0 and "UP" in stdout:
                     cap.is_up = True
-        except Exception:
-            pass
+        except Exception as exc:
+            cap.discovery_errors.append(f"link state: {type(exc).__name__}: {exc}")
 
         # Get driver info via ethtool -i
         try:
@@ -175,10 +230,13 @@ class ToolManager:
                         if key == "driver":
                             cap.driver = val
                         elif key == "bus-info":
-                            # Often contains chipset hint
-                            pass
-        except Exception:
-            pass
+                            # A bus address, not a chipset; kept for the record only.
+                            cap.bus_info = val
+        except Exception as exc:
+            cap.discovery_errors.append(f"ethtool -i: {type(exc).__name__}: {exc}")
+
+        if not cap.chipset:
+            cap.chipset = detect_chipset(interface, cap.driver)
 
         # Get MAC
         try:
@@ -186,8 +244,8 @@ class ToolManager:
             if os.path.exists(addr_path):
                 with open(addr_path, "r") as f:
                     cap.mac = f.read().strip().upper()
-        except Exception:
-            pass
+        except Exception as exc:
+            cap.discovery_errors.append(f"mac address: {type(exc).__name__}: {exc}")
 
         # Detect the interface type and current channel from the interface
         # itself. This used to live in an `else` branch that only ran when
@@ -207,10 +265,10 @@ class ToolManager:
                 if m:
                     try:
                         cap.current_channel = int(m.group(1))
-                    except ValueError:
-                        pass
-        except Exception:
-            pass
+                    except ValueError as exc:
+                        cap.discovery_errors.append(f"channel parse: {exc}")
+        except Exception as exc:
+            cap.discovery_errors.append(f"iw dev info: {type(exc).__name__}: {exc}")
 
         # Check monitor support via iw list (phy-wide "Supported interface modes")
         try:
@@ -218,8 +276,8 @@ class ToolManager:
             if exit_code == 0:
                 if "* monitor" in stdout:
                     cap.supports_monitor = True
-        except Exception:
-            pass
+        except Exception as exc:
+            cap.discovery_errors.append(f"iw list: {type(exc).__name__}: {exc}")
 
         # Check injection support via aireplay-ng --test (requires root and monitor mode)
         # Only test if interface is monitor and root
