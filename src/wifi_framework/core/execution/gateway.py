@@ -155,6 +155,29 @@ def classify_failure(reason: Optional[str]) -> str:
     return FailureCategory.TOOL_ERROR
 
 
+def recorded_command(legacy: Any) -> List[str]:
+    """The argument vector to record on an ``execution-result`` contract.
+
+    ``contracts/execution.py`` promises that the recorded command "is exactly what
+    was passed to ``subprocess.run`` and can be re-run by an auditor without
+    reinterpretation". Reconstructing it from ``raw_command.split()`` breaks that
+    promise for any argument containing whitespace - an SSID such as
+    "Office Network" becomes two elements, and the recorded command can no longer
+    be re-run.
+
+    An adapter carrying ``argv`` is authoritative even when the list is empty:
+    empty means no subprocess was launched. The Scapy adapter is exactly that case
+    - it calls a library and stores a human-readable description such as
+    "scapy sniff iface=wlan0" in ``raw_command``, which would otherwise split into
+    an argv that was never executed and put a fabricated invocation in the audit
+    trail. The ``.split()`` fallback exists only for results predating ``argv``.
+    """
+    if hasattr(legacy, "argv"):
+        return list(legacy.argv)
+    raw = getattr(legacy, "raw_command", "") or ""
+    return raw.split() if raw else []
+
+
 class ExecutionGateway:
     """Prepares and runs actions, emitting ``execution-result`` contracts."""
 
@@ -298,7 +321,11 @@ class ExecutionGateway:
         tool_ref = self._tool_ref(metadata, implementation)
         interface_ref = self._interface_ref(prepared.interface, state)
         duration_ms = int(round((legacy.duration or 0.0) * 1000))
-        command = legacy.raw_command.split() if legacy.raw_command else []
+        # Prefer the argument vector the adapter actually passed to subprocess.
+        # `raw_command.split()` cannot reconstruct it: an argument containing a
+        # space becomes two elements, so the recorded command would not be the
+        # command that ran. The fallback covers results built before argv existed.
+        command = recorded_command(legacy)
 
         result = ExecutionResult(
             assessment_id=request.assessment_id,

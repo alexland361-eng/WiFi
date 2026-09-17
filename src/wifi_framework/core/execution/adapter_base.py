@@ -36,6 +36,7 @@ class AdapterExecutionResult:
         evidences: List[Evidence] = None,
         failure_reason: Optional[str] = None,
         raw_command: str = "",
+        argv: Optional[List[str]] = None,
     ):
         self.success = success
         self.raw_output = raw_output
@@ -44,7 +45,14 @@ class AdapterExecutionResult:
         self.duration = duration
         self.evidences = evidences or []
         self.failure_reason = failure_reason
+        #: Joined form of the command, for display and audit text.
         self.raw_command = raw_command
+        #: The argument vector actually passed to subprocess, with boundaries
+        #: intact. ``raw_command`` cannot be split back into it: an argument
+        #: containing a space (an SSID such as "Office Network", a path, a BPF
+        #: filter) becomes two elements. Consumers that need to re-run or inspect
+        #: the command must use this, not ``raw_command.split()``.
+        self.argv: List[str] = list(argv) if argv else []
 
 
 class ToolAdapterBase(ABC):
@@ -243,6 +251,7 @@ class ToolAdapterBase(ABC):
                 raw_output="",
                 error_output=str(e),
                 raw_command=raw_command_str,
+                argv=cmd,
                 duration=time.time() - start,
             )
 
@@ -263,6 +272,7 @@ class ToolAdapterBase(ABC):
                 exit_code=exit_code,
                 duration=duration,
                 raw_command=raw_command_str,
+                argv=cmd,
             )
 
         success = exit_code == 0
@@ -280,6 +290,7 @@ class ToolAdapterBase(ABC):
             evidences=evidences,
             failure_reason=failure_reason,
             raw_command=raw_command_str,
+            argv=cmd,
         )
 
     def interpret_failure(self, exit_code: int, stdout: str, stderr: str) -> Optional[str]:

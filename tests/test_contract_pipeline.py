@@ -654,3 +654,125 @@ def test_loop_without_any_tool_completes_without_fabricating(bin_dir, workspace,
     assert engine.state.findings == []
     assert engine.state.unavailable_capabilities
     assert engine.state.phase.value in ("completed", "reporting", "failed")
+
+
+# ------------------------------------------------------- recorded command fidelity
+#
+# contracts/execution.py promises the recorded command "is exactly what was passed
+# to subprocess.run and can be re-run by an auditor without reinterpretation".
+# These pin that promise; the pre-existing `assert result.command == ["iw", "dev"]`
+# passed with the bug present because no argument contained whitespace.
+
+
+def test_a_recorded_command_preserves_an_ssid_containing_a_space():
+    from wifi_framework.core.execution.adapter_base import AdapterExecutionResult
+    from wifi_framework.core.execution.gateway import recorded_command
+    from wifi_framework.tools.adapters.capture.termshark import AIRBASE_METADATA, AirbaseNgAdapter
+
+    adapter = AirbaseNgAdapter(AIRBASE_METADATA)
+    cmd = adapter.build_command("wlan0", {"essid": "Office Network"})
+
+    # SSIDs with spaces are ordinary; airbase-ng takes one as an argument.
+    assert cmd == ["airbase-ng", "-e", "Office Network", "wlan0"]
+
+    result = AdapterExecutionResult(success=True, raw_command=" ".join(cmd), argv=cmd)
+    assert recorded_command(result) == cmd
+
+    # The lossy reconstruction this replaces: the recorded command would have been
+    # ['airbase-ng', '-e', 'Office', 'Network', 'wlan0'], which cannot be re-run.
+    assert result.raw_command.split() == ["airbase-ng", "-e", "Office", "Network", "wlan0"]
+    assert result.raw_command.split() != cmd
+
+
+def test_recorded_command_does_not_fabricate_an_argv_for_a_library_adapter():
+    """An empty argv means no subprocess ran; a description is not a command.
+
+    The Scapy adapter calls a library and stores prose such as
+    "scapy sniff iface=wlan0 count=10" in `raw_command`. Splitting that would put
+    an invocation in the audit trail that was never executed.
+    """
+    from wifi_framework.core.execution.adapter_base import AdapterExecutionResult
+    from wifi_framework.core.execution.gateway import recorded_command
+
+    result = AdapterExecutionResult(
+        success=True, raw_command="scapy sniff iface=wlan0 count=10 timeout=5", argv=[]
+    )
+
+    assert recorded_command(result) == []
+
+
+def test_recorded_command_falls_back_for_results_predating_argv():
+    from wifi_framework.core.execution.gateway import recorded_command
+
+    class _LegacyResult:
+        raw_command = "iw dev"
+
+    assert recorded_command(_LegacyResult()) == ["iw", "dev"]
+
+
+def test_execute_populates_argv_with_the_vector_it_actually_ran():
+    """`argv` must be the list handed to subprocess, not a reconstruction."""
+    from wifi_framework.core.execution.adapter_base import AdapterExecutionResult, ToolAdapterBase
+    from wifi_framework.core.models.capability import (
+        CapabilityRequirements,
+        OperatingSystem,
+        ToolCapabilityMetadata,
+    )
+
+    class _EchoSpaceAdapter(ToolAdapterBase):
+        def build_command(self, interface, parameters):
+            return ["echo", parameters["message"]]
+
+        def parse_output(self, raw_output, error_output, exit_code, parameters, interface):
+            return []
+
+    adapter = _EchoSpaceAdapter(
+        ToolCapabilityMetadata(
+            name="echo_space_probe",
+            display_name="Echo space probe",
+            category=None,
+            description="test stub",
+            tool_binary="echo",
+            requirements=CapabilityRequirements(operating_systems=[OperatingSystem.LINUX]),
+        )
+    )
+
+    result = adapter.execute(parameters={"message": "Office Network"}, timeout=10)
+
+    assert result.success is True, result.failure_reason
+    assert result.argv == ["echo", "Office Network"]
+    assert result.raw_output.strip() == "Office Network"
+    assert result.raw_command.split() != result.argv
+
+
+def test_a_failure_path_still_records_the_command_it_attempted():
+    """argv must be populated on failure too, or an auditor cannot see what ran."""
+    from wifi_framework.core.execution.adapter_base import ToolAdapterBase
+    from wifi_framework.core.models.capability import (
+        CapabilityRequirements,
+        OperatingSystem,
+        ToolCapabilityMetadata,
+    )
+
+    class _FailingAdapter(ToolAdapterBase):
+        def build_command(self, interface, parameters):
+            return ["false", "Office Network"]
+
+        def parse_output(self, raw_output, error_output, exit_code, parameters, interface):
+            return []
+
+    adapter = _FailingAdapter(
+        ToolCapabilityMetadata(
+            name="false_space_probe",
+            display_name="Failing probe",
+            category=None,
+            description="test stub",
+            tool_binary="false",
+            requirements=CapabilityRequirements(operating_systems=[OperatingSystem.LINUX]),
+        )
+    )
+
+    result = adapter.execute(parameters={}, timeout=10)
+
+    assert result.success is False
+    assert result.argv == ["false", "Office Network"]
