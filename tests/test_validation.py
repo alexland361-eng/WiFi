@@ -24,6 +24,7 @@ from wifi_framework.utils import validation
 from wifi_framework.utils.validation import (
     CONTROL_CHARS,
     SHELL_METACHARACTERS,
+    integral_int,
     normalize_mac,
     validate_channel,
     validate_cidr,
@@ -780,3 +781,72 @@ def test_no_real_adapter_lets_a_poisoned_interface_reach_its_command_line():
             leaked.append(name)
 
     assert not leaked, f"poisoned interface reached argv for: {leaked}"
+
+
+# ---------------------------------------------------------------- integral_int
+#
+# Two coercion rules live in this module and they are deliberately different. Pinning
+# both, and the difference, is what stops someone "fixing" one to match the other and
+# breaking the channel scope gate - whose coupling to `validate_channel` is pinned in
+# tests/test_policy.py.
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (6, 6),
+        (0, 0),
+        (-45, -45),
+        ("6", 6),
+        ("  11  ", 11),
+        ("-45", -45),
+        ("-45.0", -45),
+        (-45.0, -45),
+        (6.0, 6),
+    ],
+)
+def test_integral_values_are_accepted(value, expected):
+    assert integral_int(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [6.5, "6.5", -45.5, "", "  ", "abc", "0x9", None, True, False, [], {}, float("nan"), float("inf")],
+)
+def test_values_that_are_not_whole_numbers_are_refused(value):
+    assert integral_int(value) is None
+
+
+def test_a_fractional_value_is_refused_rather_than_truncated():
+    """`int(6.5)` is 6. For a value being *recorded* - a declared channel in an
+    authorization scope, an observed channel written into the world model - a rounded
+    number becomes a stored fact, so it is refused instead."""
+    assert integral_int(6.5) is None
+    assert int(6.5) == 6, "premise: truncation would have produced a valid channel"
+
+
+def test_nan_and_inf_are_refused_without_a_special_case():
+    """`int(float('nan'))` raises ValueError and `int(float('inf'))` raises OverflowError;
+    `float.is_integer` is False for both, so neither reaches a conversion."""
+    assert integral_int(float("nan")) is None
+    assert integral_int(float("inf")) is None
+    assert integral_int("-inf") is None
+
+
+def test_bool_is_refused_even_though_it_is_an_int():
+    """`isinstance(True, int)` is True, so a boolean would otherwise be recorded as the
+    channel 1 - a real channel, and a plausible value for a flag to be mistaken for."""
+    assert integral_int(True) is None
+    assert integral_int(False) is None
+
+
+def test_validate_channel_deliberately_uses_the_other_rule():
+    """`validate_channel` coerces with `int()`, because it is coupled to the policy scope
+    gate: the gate skips a channel it cannot coerce and parameter validation refuses it,
+    so the two must convert identically or a value slips past both. `integral_int` is the
+    stricter rule for values being recorded. The divergence is intentional."""
+    assert validate_channel(9.5)[0] is True, "the runtime gate coerces 9.5 to channel 9"
+    assert integral_int(9.5) is None, "recording 9.5 would store a channel that was never observed"
+
+    assert validate_channel("9.0")[0] is False
+    assert integral_int("9.0") == 9

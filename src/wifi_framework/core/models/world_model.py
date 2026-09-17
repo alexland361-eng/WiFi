@@ -10,7 +10,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from ...utils.validation import integral_int
 from .evidence import Evidence, EvidenceType
+
+
+def _record_parse_error(errors: List[str], field: str, value: Any, kept: Any) -> None:
+    """Note a value that could not be read, once per distinct message.
+
+    Deduplicated because a world model is long-lived: an access point observed on every
+    sweep of a long capture would otherwise accumulate one identical entry per sweep.
+    """
+    message = f"{field}: could not read {value!r} as a whole number; kept {kept!r}"
+    if message not in errors:
+        errors.append(message)
 
 
 @dataclass
@@ -34,6 +46,11 @@ class AccessPoint:
     is_hidden: bool = False
     uptime: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)
+    #: Evidence values that could not be read, so the field kept its previous value.
+    #: A dropped value used to leave no trace at all: the entity silently retained a
+    #: stale channel or signal, and nothing downstream could tell a field that was never
+    #: observed from one whose latest observation was unreadable.
+    parse_errors: List[str] = field(default_factory=list)
 
     def update_from_evidence(self, evidence: Evidence):
         data = evidence.parsed_data
@@ -43,18 +60,20 @@ class AccessPoint:
             if self.ssid == "" or data.get("is_hidden"):
                 self.is_hidden = True
         if "channel" in data and data["channel"]:
-            try:
-                self.channel = int(data["channel"])
-            except (ValueError, TypeError):
-                pass
+            channel = integral_int(data["channel"])
+            if channel is None:
+                _record_parse_error(self.parse_errors, "channel", data["channel"], self.channel)
+            else:
+                self.channel = channel
         if "frequency" in data:
             self.frequency = data["frequency"]
         if "signal" in data or "power" in data:
             sig = data.get("signal") or data.get("power")
-            try:
-                self.signal_strength = int(sig)
-            except (ValueError, TypeError):
-                pass
+            signal = integral_int(sig)
+            if signal is None:
+                _record_parse_error(self.parse_errors, "signal", sig, self.signal_strength)
+            else:
+                self.signal_strength = signal
         if "encryption" in data:
             enc = data["encryption"]
             if isinstance(enc, str):
@@ -106,6 +125,7 @@ class AccessPoint:
             "client_macs": list(self.client_macs),
             "is_hidden": self.is_hidden,
             "extra": self.extra,
+            "parse_errors": list(self.parse_errors),
         }
 
 
@@ -120,6 +140,8 @@ class WirelessClient:
     evidence_ids: List[str] = field(default_factory=list)
     manufacturer: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)
+    #: See ``AccessPoint.parse_errors``.
+    parse_errors: List[str] = field(default_factory=list)
 
     def update_from_evidence(self, evidence: Evidence):
         data = evidence.parsed_data
@@ -129,10 +151,13 @@ class WirelessClient:
             if data["probed_ssid"] not in self.ssid_probed:
                 self.ssid_probed.append(data["probed_ssid"])
         if "signal" in data:
-            try:
-                self.signal_strength = int(data["signal"])
-            except (ValueError, TypeError):
-                pass
+            signal = integral_int(data["signal"])
+            if signal is None:
+                _record_parse_error(
+                    self.parse_errors, "signal", data["signal"], self.signal_strength
+                )
+            else:
+                self.signal_strength = signal
         self.last_seen = evidence.timestamp
         if evidence.id not in self.evidence_ids:
             self.evidence_ids.append(evidence.id)
@@ -148,6 +173,7 @@ class WirelessClient:
             "evidence_ids": self.evidence_ids,
             "manufacturer": self.manufacturer,
             "extra": self.extra,
+            "parse_errors": list(self.parse_errors),
         }
 
 

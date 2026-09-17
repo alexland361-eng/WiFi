@@ -137,6 +137,36 @@ def validate_cidr(cidr: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def integral_int(value: Any) -> Optional[int]:
+    """A whole number from ``value``, or ``None`` if it is not one.
+
+    Refuses rather than truncates, because ``int(6.5)`` is 6 and a silently rounded
+    channel is a wrong channel - for an access point that means observations attributed
+    to a frequency it is not on. Integral strings and floats are accepted: a tool
+    printing ``"-45.0"`` for a signal level has said something unambiguous. ``nan`` and
+    ``inf`` are refused, which ``float.is_integer`` settles without a separate guard.
+
+    This is deliberately *not* the rule ``validate_channel`` and the policy scope gate
+    use. Those two coerce with ``int()`` and are coupled to each other by tests in
+    ``test_policy.py`` - the gate skips a value it cannot coerce and parameter validation
+    refuses it, so both must convert identically or a channel slips past both. This
+    helper is the stricter rule for values being *recorded*: a declared channel in an
+    authorization scope, or an observed channel written into the world model, where a
+    rounded number becomes a stored fact rather than a one-off comparison.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not number.is_integer():
+        return None
+    return int(number)
+
+
 def validate_parameters(params: Dict[str, Any], required: List[str], validators: Optional[Dict[str, Callable[[Any], Tuple[bool, str]]]] = None) -> Tuple[bool, List[str]]:
     """
     Validate parameters dict against required list and custom validators.

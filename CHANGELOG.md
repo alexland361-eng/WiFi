@@ -879,6 +879,18 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   through a helper that reports instead of raising, and refuses a value that does not
   survive the round trip: `int(6.5)` is 6, a valid channel, so a naive coercion would have
   rounded a malformed declaration into an authorized one.
+- **A malformed channel or signal was dropped with no trace in the world model**
+  (carried forward as a known limitation from 0.5.1). `AccessPoint.update_from_evidence`
+  and `WirelessClient.update_from_evidence` each caught `(ValueError, TypeError)` and
+  `pass`ed, so the entity kept its previous value and nothing recorded that the newest
+  observation was unreadable. A field that was never observed and a field whose latest
+  observation failed were indistinguishable in `WorldModel.to_dict()` - which is what the
+  audit trail and the assessment report are built from. Both now record the field, the
+  offending value and the value kept, on a new `parse_errors` list that is carried into the
+  dump. Entries are deduplicated, because a world model is long-lived and an access point
+  seen on every sweep of a long capture would otherwise accumulate one identical entry per
+  sweep. Coercion also stopped truncating: `int(6.5)` is 6, so a fractional channel was
+  silently rounded into a channel the access point is not on.
 - **A mixed IPv4/IPv6 authorized scope crashed the network scope check** (found by mypy).
   `IPv4Network.subnet_of(IPv6Network)` raises `TypeError` rather than returning False, and
   the comparison sat outside the surrounding `try`. With both families authorized, an
@@ -945,6 +957,12 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 - **`AssessmentScope.invalid_bssids` / `invalid_networks`**, recorded at construction and
   carried in `to_dict()`, so the audit trail shows what was requested *and* what was
   unusable without depending on a caller remembering to call `validate()` (`ccf7329`).
+- **`utils.validation.integral_int(value)`** - a whole number or `None`, refusing rather
+  than truncating. Used by both `AssessmentScope._channel_number` and the world model
+  entities, so a channel *declared* in an authorization scope and a channel *observed* into
+  the world model cannot disagree about what counts as a whole number. `nan` and `inf` are
+  refused without a special case, via `float.is_integer`.
+- **`AccessPoint.parse_errors` / `WirelessClient.parse_errors`**, carried into `to_dict()`.
 - **A lint and type gate** (`quality-gate` CI job). `ruff check src tests scripts` is
   blocking on everything the project selects except the two categories recorded as deferred
   debt in `pyproject.toml`, each with the count measured when the gate was introduced.
@@ -961,7 +979,7 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   discarded locals, 9 f-strings with no placeholders, 4 ambiguous `l` loop variables
   (indistinguishable from `1` in a terminal), 6 imports stranded mid-file, and a dead
   `csv_path` assignment duplicating the first entry of the `possible_paths` list below it.
-- **mypy findings reduced from 194 to 34**, by fixing rather than suppressing: implicit-
+- **mypy findings reduced from 194 to 33**, by fixing rather than suppressing: implicit-
   Optional parameters made explicit (`interface: str = None` is an annotation that lies,
   across 40 sites), and the heterogeneous dicts annotated. The second change cascaded -
   annotating `parsed: Dict[str, Any]` removed 21 `union-attr` findings at once, because
@@ -976,14 +994,17 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 
 ### Tests
 
-- 734 passing with scapy installed, 731 plus 3 skipped without. Up from 650 at 0.5.1.
+- 772 passing with scapy installed, 769 plus 3 skipped without. Up from 650 at 0.5.1.
+  CI green on all five jobs: unit tests on py3.10/3.11/3.12, the new lint and type gate, and
+  the mac80211_hwsim wireless job (12/12 capture and injection checks against real radios).
 - `scripts/exercise_framework.py` reports 61/69 with 11 skipped, unchanged - the 8 failures
   and 11 skips are the sandbox having no wireless hardware and none of the 52 declared tools
   installed, each recorded with the reason rather than counted as a pass.
 - New tests: 16 for parse-problem reporting, 17 for storage permissions, 18 for malformed
   scope entries and `validate()`, 26 for the channel scope-gate coupling, 18 for airodump
   screen output and CSV failures, 14 for declared-input enforcement, 6 for mixed-family
-  scope. Each batch mutation-checked.
+  scope, 11 for unreadable world-model values, 27 for `integral_int`. Each batch
+  mutation-checked - restoring the three silent `except: pass` handlers fails 9 tests.
 - The channel scope gate skips a channel it cannot coerce to `int()`, with a comment saying
   parameter validation reports it. That is correct today - both sides do the identical
   conversion catching the identical exceptions - but nothing pinned it, and if parameter

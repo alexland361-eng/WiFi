@@ -1144,6 +1144,25 @@ Six commits, every fix mutation-checked.
   mutation actually applied. "The tests still pass" is the expected outcome of a mutation that
   never happened.**
 
+- **Appending tests to an existing file strands their imports mid-file, and I did it three
+  times.** Writing a test block to a scratch file and `cat >>`-ing it avoids the nested-quote
+  problems that made `python3 -c` patching unreliable - but the block carries its own imports,
+  which land after a hundred lines of code and trip `E402` and `F811` (a redefinition of a name
+  the module already imports at the top). It happened in `test_scope.py`, `test_parsers.py`,
+  `test_policy.py`, `test_adapters.py` and `test_validation.py`. **Lesson: when appending tests,
+  write the imports into the file's existing import block first, then append the body. The gate
+  caught every instance, which is the argument for having one.**
+
+- **Two coercion rules in one module, kept different on purpose.** `integral_int` refuses a
+  fractional value; `validate_channel` coerces with `int()` and accepts `9.5` as channel 9.
+  Unifying them would have been wrong: `validate_channel` is coupled to the policy scope gate,
+  which skips a channel it cannot coerce on the assumption that parameter validation refuses
+  it, so both must convert identically or a value slips past both. `integral_int` governs values
+  being *recorded*, where a rounded number becomes a stored fact. Both rules and the reason they
+  differ are now pinned by tests, and the helper's docstring says which is which. **Lesson: when
+  two similar-looking functions must not be merged, the reason belongs in the code and in a
+  test, not in a commit message.**
+
 - **Python's chained comparison wrote a test assertion that could not fail.**
   `assert x in y is False` parses as `(x in y) and (y is False)`. It passed for the wrong
   reason until the neighbouring assertion changed. Parenthesise: `assert (x in y) is False`.
@@ -1183,9 +1202,11 @@ Six commits, every fix mutation-checked.
 
 ### Success Metrics
 
-- 734 tests passing with scapy, 731 plus 3 skipped without (650 at 0.5.1).
+- 772 tests passing with scapy, 769 plus 3 skipped without (650 at 0.5.1). CI green on all
+  five jobs, including the mac80211_hwsim wireless job (12/12 capture and injection checks
+  against real radios).
 - Ruff: 722 findings -> 0 in the gated set, and CI now runs it on every push.
-- Mypy: 194 findings -> 34, with the residue gated against growth.
+- Mypy: 194 findings -> 33, with the residue gated against growth by `.mypy-baseline`.
 - Seven defects fixed, six from the silent-failure audit and one from the type checker. Each
   mutation-checked; the airodump batch alone fails 13 tests when the dead loop is restored,
   and breaking the channel-gate coupling fails 12 including an end-to-end scope case.
@@ -1209,7 +1230,7 @@ Six commits, every fix mutation-checked.
 - **The channel scope gate's coupling to parameter validation is now pinned by tests but is
   still two implementations of the same conversion.** They agree exactly today; the tests
   exist because nothing else would notice if they stopped.
-- Carried forward from 0.5.1: redaction is name-driven, tool output is deliberately not
-  redacted (so a report leaving the machine carries any recovered passphrase with it), and two
-  `except (ValueError, TypeError): pass` handlers remain in
-  `AccessPoint.update_from_evidence`.
+- Carried forward from 0.5.1: redaction is name-driven, and tool output is deliberately not
+  redacted, so a report leaving the machine carries any recovered passphrase with it. The two
+  `except (ValueError, TypeError): pass` handlers in `AccessPoint.update_from_evidence` listed
+  there are now fixed, along with the matching one in `WirelessClient`.

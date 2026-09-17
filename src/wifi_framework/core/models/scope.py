@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Set
 
-from ...utils.validation import normalize_mac
+from ...utils.validation import integral_int, normalize_mac
 
 
 @dataclass
@@ -213,24 +213,13 @@ class AssessmentScope:
     def _channel_number(channel: Any) -> Optional[int]:
         """A channel as an int, or ``None`` if the value is not one.
 
-        Accepts the integral strings a configuration file produces, and rejects
-        anything that does not survive the round trip - ``6.5`` truncates to a valid
-        channel, so it is refused rather than quietly rounded.
+        Delegates to :func:`utils.validation.integral_int`, which accepts the integral
+        strings a configuration file produces and refuses anything that does not survive
+        the round trip - ``6.5`` truncates to a valid channel, so it is refused rather
+        than quietly rounded. One rule for every value being recorded, so a declared
+        channel here and an observed channel in the world model cannot disagree.
         """
-        if isinstance(channel, bool):
-            return None
-        if isinstance(channel, int):
-            return channel
-        try:
-            number = int(str(channel).strip())
-        except (TypeError, ValueError):
-            return None
-        try:
-            if float(str(channel).strip()) != number:
-                return None
-        except (TypeError, ValueError):
-            return None
-        return number
+        return integral_int(channel)
 
     def to_dict(self):
         return {
