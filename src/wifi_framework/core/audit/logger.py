@@ -14,13 +14,14 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from ..models.assessment_state import AssessmentState, ExecutionRecord
 from ..models.evidence import Evidence
 from ..models.finding import Finding
 
 
+from ...utils.redaction import redact_with_report
 from ...utils.system import ensure_private_dir, tighten_file_mode
 
 
@@ -37,19 +38,37 @@ class AuditLogger:
         #: rather than swallowed.
         self.write_failures: List[str] = []
 
+        #: Secrets seen so far, accumulated across events. A passphrase is supplied
+        #: when the Decision Engine parameterises an action but is written into a
+        #: command line when the Execution Engine reports it, so masking has to reach
+        #: across the trail rather than treat each event independently.
+        self._secrets: Dict[str, set] = {}
+
         # Ensure the log directory exists and is readable only by this user. The
         # default sits under /tmp, which is world-writable and predictable.
         ensure_private_dir(self.log_dir)
 
     def log_event(self, event_type: str, data: Dict[str, Any], timestamp: datetime = None):
-        """Log an event."""
+        """Log an event.
+
+        ``data`` is redacted here rather than at each call site. This is the single
+        point every audit record passes through, so a new event type cannot disclose
+        an operator secret by forgetting to filter - and the adapters do put secrets
+        in command lines (``aircrack-ng`` a passphrase, ``reaver`` a WPS PIN,
+        Impacket ``user:pass@host``). What was masked is recorded on the event, so
+        the trail states that it was filtered instead of presenting a masked value
+        as the value that was used.
+        """
         timestamp = timestamp or datetime.now(timezone.utc)
+        redacted_data, report = redact_with_report(data, known_secrets=self._secrets)
         event = {
             "timestamp": timestamp.isoformat(),
             "assessment_id": self.assessment_id,
             "event_type": event_type,
-            "data": data,
+            "data": redacted_data,
         }
+        if report.applied:
+            event["redaction"] = report.to_dict()
         self.events.append(event)
 
         # Also write to file for persistence
@@ -305,6 +324,14 @@ class AuditLogger:
         report = self.generate_report(state)
         if not output_path:
             output_path = os.path.join(self.log_dir, f"{state.id}_report.json")
+
+        # The report inlines ``raw_command`` for every evidence item and every
+        # finding trace, and ``parameters`` for every execution. It is the artefact
+        # most likely to leave the machine it was produced on, so it is filtered on
+        # the way out rather than relying on generate_report's callers.
+        report, report_redaction = redact_with_report(report, known_secrets=self._secrets)
+        if report_redaction.applied:
+            report["redaction"] = report_redaction.to_dict()
 
         try:
             with open(output_path, "w") as f:
