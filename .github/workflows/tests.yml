@@ -128,13 +128,43 @@ jobs:
         run: |
           set +e
           # sudo resets PATH via secure_path, which would hide iw/rfkill/macchanger
-          # from the script's subprocess calls; pass the runner PATH through.
-          sudo env PATH="$PATH" "$(which python)" scripts/verify_wireless_hardware.py 2>&1 \
+          # from the script's subprocess calls. GITHUB_ACTIONS must be passed
+          # explicitly too, or the script cannot tell it is in CI and stays silent
+          # about its findings.
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true \
+            "$(which python)" scripts/verify_wireless_hardware.py 2>&1 \
             | tee wireless-verification.log
           code=${PIPESTATUS[0]}
           set -e
           echo "verification exit code: $code"
           exit "$code"
+
+      # Independent of the script's own annotations: if the Python side ever
+      # fails to emit them, the log still carries the findings.
+      - name: Surface failures from the log
+        if: always()
+        run: |
+          if [ ! -f wireless-verification.log ]; then echo "no log produced"; exit 0; fi
+
+          echo "--- environment ---"
+          grep -E '^(kernel:|mac80211_hwsim loaded:|physical devices|wireless interfaces:|  wlan)' \
+            wireless-verification.log || true
+
+          echo "--- result line ---"
+          summary=$(grep -E '^RESULT:' wireless-verification.log | head -1 | tr -d '\n' || true)
+          echo "${summary:-no RESULT line found}"
+          if [ -n "$summary" ]; then
+            echo "::notice title=verification-summary::${summary}"
+          fi
+
+          echo "--- failed checks with claimed vs observed ---"
+          grep -A3 '\[FAIL\]' wireless-verification.log | sed 's/^[[:space:]]*//' || true
+
+          fails=$(grep -A3 '\[FAIL\]' wireless-verification.log | sed 's/^[[:space:]]*//' | tr '\n' ' ' | tr -s ' ' || true)
+          if [ -n "$fails" ]; then
+            echo "::error title=failed-checks::$(echo "$fails" | cut -c1-900)"
+          fi
+
 
       - name: Upload verification log
         if: always()
