@@ -42,6 +42,9 @@ if os.path.isdir(_SRC) and _SRC not in sys.path:
 CHANNEL = 1
 FRAME_COUNT = 12
 TIMEOUT = 20
+# ETH_P_ALL: receive every protocol, not just one. Not exposed as a socket
+# constant on every platform, so the numeric value is used directly.
+_ETH_P_ALL = 0x0003
 
 
 def sh(cmd: List[str], timeout: int = 20) -> Tuple[int, str, str]:
@@ -98,9 +101,12 @@ class Report:
 def raw_capture(iface: str, stop: threading.Event, sink: Dict[str, bytes]) -> None:
     """Capture raw 802.11 bytes on a monitor interface using only the stdlib."""
     try:
-        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
+        # AF_PACKET needs ETH_P_ALL to deliver anything at all, and SOCK_RAW to
+        # keep the link-layer header: monitor-mode frames arrive prefixed with a
+        # radiotap header that SOCK_DGRAM would try, and fail, to strip.
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(_ETH_P_ALL))
         sock.bind((iface, 0))
-        sock.settimeout(1.0)
+        sock.settimeout(0.5)
         chunks = []
         while not stop.is_set():
             try:
