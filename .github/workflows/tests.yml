@@ -1,0 +1,109 @@
+name: tests
+
+# Unit tests run anywhere. The wireless job needs a kernel that can load
+# mac80211_hwsim, which GitHub-hosted runners have and this project's dev
+# sandbox does not (CONFIG_MODULES is not set there).
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: unit tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Run test suite
+        run: python -m pytest -q
+
+      - name: Coverage
+        run: python -m pytest -q --cov=wifi_framework --cov-report=term-missing
+
+  wireless-hardware:
+    name: wireless verification (mac80211_hwsim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install wireless tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iw rfkill macchanger ethtool aircrack-ng
+          iw --version
+          macchanger --version | head -1
+          airmon-ng --help 2>&1 | head -2 || true
+
+      # mac80211_hwsim lives in linux-modules-extra on Ubuntu. Try the load
+      # first (runner images sometimes ship it), then install and retry.
+      - name: Load mac80211_hwsim
+        run: |
+          set -x
+          if sudo modprobe mac80211_hwsim radios=2 2>/dev/null; then
+            echo "loaded on first attempt"
+          else
+            echo "first attempt failed; installing linux-modules-extra-$(uname -r)"
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)" || \
+              sudo apt-get install -y linux-modules-extra-generic || true
+            sudo modprobe mac80211_hwsim radios=2
+          fi
+          lsmod | grep -E 'hwsim|mac80211|cfg80211'
+
+      - name: Confirm virtual radios exist
+        run: |
+          iw dev
+          test -d /sys/class/ieee80211 || { echo "FATAL: no cfg80211 phy present"; exit 1; }
+          count=$(iw dev | grep -c 'Interface' || true)
+          echo "wireless interfaces found: $count"
+          test "$count" -ge 1 || { echo "FATAL: hwsim created no interfaces"; exit 1; }
+
+      - name: Install framework
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Verify InterfaceManager against the virtual radio
+        run: |
+          set +e
+          # sudo resets PATH via secure_path, which would hide iw/rfkill/macchanger
+          # from the script's subprocess calls; pass the runner PATH through.
+          sudo env PATH="$PATH" "$(which python)" scripts/verify_wireless_hardware.py 2>&1 \
+            | tee wireless-verification.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "verification exit code: $code"
+          exit "$code"
+
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wireless-verification-log
+          path: wireless-verification.log
+          if-no-files-found: warn
