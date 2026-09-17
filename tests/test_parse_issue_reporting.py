@@ -324,3 +324,76 @@ def test_parse_warnings_survive_the_whole_chain():
     assert any("could not be parsed" in issue for issue in result.evidence_set.parse_issues), (
         "a truncated nmap document reached the World Model looking like a clean empty scan"
     )
+
+
+# ------------------------------------------------------- airodump-ng adapter
+#
+# The screen-output fallback used to return nothing at all, so an adapter that failed to
+# read a busy capture recorded an empty observation. These go through the real adapter.
+
+#: Compact modern-layout screen capture; the full fixtures live in tests/test_parsers.py.
+AIRODUMP_SCREEN = """ CH  11 ][ Elapsed: 1 min ][ 2026-09-17 10:23
+
+ BSSID              PWR RXQ  Beacons    #Data, #/s  CH   MB   ENC   CIPHER  AUTH  ESSID
+
+ 00:11:22:33:44:55  -45 100      512       42    0  11  130   WPA2  CCMP    PSK   TestNetwork
+
+ Station            PWR   Rate    Lost    Frames  Notes  Probes
+
+ 11:22:33:44:55:66  -60   24e-54e  0      128          TestNetwork
+"""
+
+#: MACs with no table header: unattributable, and definitely not an empty capture.
+AIRODUMP_UNREADABLE = (
+    "00:11:22:33:44:55 unexpected format\n"
+    "AA:BB:CC:DD:EE:FF unexpected format\n"
+)
+
+
+def test_the_airodump_adapter_reports_a_screen_capture_it_could_not_read():
+    adapter = _registry().get_adapter_instance("airodump-ng")
+    adapter.parse_warnings = []
+
+    evidences = adapter.parse_output(AIRODUMP_UNREADABLE, "", 0, {}, "wlan0mon")
+
+    assert evidences == []
+    assert any("was not empty" in warning for warning in adapter.parse_warnings), (
+        "an unreadable capture reached the World Model looking like an empty observation"
+    )
+
+
+def test_the_airodump_adapter_parses_screen_output_when_no_csv_file_exists():
+    """No `--write` file means `csv_content` stays None and the screen fallback is the
+    only source; it must actually produce evidence rather than an empty list."""
+    adapter = _registry().get_adapter_instance("airodump-ng")
+    adapter.parse_warnings = []
+
+    evidences = adapter.parse_output(AIRODUMP_SCREEN, "", 0, {}, "wlan0mon")
+
+    assert len(evidences) == 2
+    bssids = {e.parsed_data.get("bssid") or e.parsed_data.get("client_mac") for e in evidences}
+    assert bssids == {"00:11:22:33:44:55", "11:22:33:44:55:66"}
+
+    # The fallback worked, and says so: screen parsing cannot attribute probe requests,
+    # and leaving that unstated would let a truncated client record look complete.
+    assert any(
+        "does not reliably attribute probe requests" in warning
+        for warning in adapter.parse_warnings
+    )
+
+
+def test_the_authoritative_csv_path_reports_nothing():
+    csv_content = (
+        "BSSID, First time seen, Last time seen, channel, Speed, Privacy, Cipher, "
+        "Authentication, Power, # beacons, # IV, LAN IP, ID-length, ESSID, Key\n"
+        "00:11:22:33:44:55, 2026-09-17 10:00:00, 2026-09-17 10:01:00, 11, 130, WPA2, "
+        "CCMP, PSK, -45, 512, 0, , 11, TestNetwork, \n"
+    )
+    from wifi_framework.parsers.airodump import airodump_to_evidences
+
+    issues = []
+    evidences = airodump_to_evidences(
+        raw_output="", csv_content=csv_content, interface="wlan0mon", issues=issues
+    )
+    assert len(evidences) == 1
+    assert issues == [], "the authoritative CSV path produced spurious warnings"

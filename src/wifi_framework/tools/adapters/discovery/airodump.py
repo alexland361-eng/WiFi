@@ -74,9 +74,8 @@ class AirodumpNgAdapter(ToolAdapterBase):
         csv_content = None
 
         if output_prefix:
-            # Look for csv file
-            csv_path = f"{output_prefix}-01.csv"
-            # Also try without -01
+            # airodump-ng names its CSV by the rotation index it reached, so every
+            # candidate is tried rather than assuming ``-01``.
             possible_paths = [
                 f"{output_prefix}-01.csv",
                 f"{output_prefix}.csv",
@@ -106,13 +105,19 @@ class AirodumpNgAdapter(ToolAdapterBase):
                     except OSError:
                         continue
 
-        # Parse evidences
+        # Parse evidences. Problems are collected rather than left inside the parser:
+        # a screen-output fallback that found nothing and a radio that genuinely saw
+        # nothing both produce an empty evidence list, and the difference has to reach
+        # the Evidence Engine or the assessment records "no access points observed".
+        parse_issues: List[str] = []
         evidences = airodump_to_evidences(
             raw_output=raw_output + "\n" + error_output,
             csv_content=csv_content,
             interface=interface,
             execution_id=self.execution_id,
+            issues=parse_issues,
         )
+        self.parse_warnings.extend(parse_issues)
 
         return evidences
 
