@@ -15,7 +15,7 @@ from ..core.execution.dependency_resolver import DependencyResolver
 from ..tools.registry_loader import load_all_adapters
 from ..core.audit.logger import AuditLogger
 from ..core.experience.store import ExperienceStore
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -147,41 +147,98 @@ Operational Philosophy:
     return parser
 
 
+#: Keys ``--config`` may carry. Anything else is reported and ignored, because a key
+#: silently dropped here narrows the authorization the operator believes they granted -
+#: the same failure mode as an unparseable entry being dropped from a scope.
+SCOPE_CONFIG_KEYS = frozenset(
+    {
+        "authorized_ssids",
+        "authorized_bssids",
+        "authorized_channels",
+        "authorized_networks",
+        "authorized_hosts",
+        "description",
+    }
+)
+
+
+def _load_scope_config(path: str) -> Dict[str, Any]:
+    """Read a YAML scope file, or exit with the reason it could not be used."""
+    try:
+        import yaml
+
+        with open(path, "r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+    except Exception as exc:
+        print(f"[!] Failed to load config {path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        print(
+            f"[!] Config {path} must be a mapping of scope keys, got "
+            f"{type(config).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    unknown = sorted(set(config) - SCOPE_CONFIG_KEYS)
+    if unknown:
+        print(
+            f"[!] Ignoring unrecognized scope config keys: {', '.join(unknown)} "
+            f"(known: {', '.join(sorted(SCOPE_CONFIG_KEYS))})",
+            file=sys.stderr,
+        )
+    return config
+
+
 def load_scope_from_args(args) -> AssessmentScope:
-    """Create scope from CLI args."""
+    """Create the authorization scope from CLI args plus a YAML config file.
+
+    Every source is merged **before** the scope is constructed. ``AssessmentScope``
+    compiles its matchers in ``__post_init__`` - the SSID patterns, the normalized BSSID
+    set, the parsed networks, and the record of entries that failed to parse - so
+    extending those lists afterwards adds entries the authorization checks never see.
+
+    Constructing first and merging second, as this used to, made the documented
+    ``--config`` path refuse invasive actions against assets the operator had explicitly
+    authorized, and refuse every network action against authorized networks, while passive
+    discovery still appeared to work because an empty scope permits it. A malformed entry
+    in the config was also invisible to ``validate()``, which reports what was dropped at
+    construction time.
+    """
+    config = _load_scope_config(args.config) if args.config else {}
+
+    def merged(from_args: Optional[List[Any]], key: str) -> List[Any]:
+        """Args first, then config, with the config's type checked.
+
+        ``list.extend`` on a string iterates its characters, so a config written as
+        ``authorized_ssids: MyNetwork`` rather than a one-item list would have authorized
+        the single characters 'M', 'y', 'N' ... - a scope that matches nothing and looks
+        like it parsed correctly.
+        """
+        from_config = config.get(key)
+        if from_config is None:
+            from_config = []
+        if not isinstance(from_config, list):
+            print(
+                f"[!] Config key '{key}' must be a list, got {type(from_config).__name__}: "
+                f"{from_config!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return list(from_args or []) + list(from_config)
+
     scope = AssessmentScope(
-        authorized_ssids=args.ssid,
-        authorized_bssids=args.bssid,
-        authorized_channels=args.channel,
-        authorized_networks=args.networks,
-        authorized_hosts=args.hosts,
-        description=args.scope_description,
+        authorized_ssids=merged(args.ssid, "authorized_ssids"),
+        authorized_bssids=merged(args.bssid, "authorized_bssids"),
+        authorized_channels=merged(args.channel, "authorized_channels"),
+        authorized_networks=merged(args.networks, "authorized_networks"),
+        authorized_hosts=merged(args.hosts, "authorized_hosts"),
+        description=config.get("description") or args.scope_description,
         strict_mode=args.strict,
     )
-
-    # Load from config file if provided
-    if args.config:
-        try:
-            import yaml
-
-            with open(args.config, "r") as f:
-                config = yaml.safe_load(f)
-                if config:
-                    if "authorized_ssids" in config:
-                        scope.authorized_ssids.extend(config["authorized_ssids"])
-                    if "authorized_bssids" in config:
-                        scope.authorized_bssids.extend(config["authorized_bssids"])
-                    if "authorized_channels" in config:
-                        scope.authorized_channels.extend(config["authorized_channels"])
-                    if "authorized_networks" in config:
-                        scope.authorized_networks.extend(config["authorized_networks"])
-                    if "authorized_hosts" in config:
-                        scope.authorized_hosts.extend(config["authorized_hosts"])
-                    if "description" in config:
-                        scope.description = config["description"]
-        except Exception as e:
-            print(f"[!] Failed to load config {args.config}: {e}", file=sys.stderr)
-            sys.exit(1)
 
     # Validate scope
     errors = scope.validate()

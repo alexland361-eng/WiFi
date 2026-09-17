@@ -1057,7 +1057,11 @@ operator or the World Model saw an empty result where the truth was a broken one
 
 Fixing those six, then running the project's own declared lint configuration for the first
 time, found a seventh that no amount of reading had surfaced: a mixed IPv4/IPv6 authorized
-scope crashed the network scope check.
+scope crashed the network scope check. Measuring coverage afterwards found an eighth, in the
+one module with no tests at all: the documented `--config` path never reached the
+authorization checks, so the framework refused invasive actions against assets the operator
+had explicitly authorized. It is the most consequential defect of the pass and it was found
+by a number, not by reading.
 
 Test count 650 -> 734. Ruff findings in the gated set 722 -> 0. Mypy findings 194 -> 34.
 Six commits, every fix mutation-checked.
@@ -1153,6 +1157,57 @@ Six commits, every fix mutation-checked.
   write the imports into the file's existing import block first, then append the body. The gate
   caught every instance, which is the argument for having one.**
 
+- **Coverage found the worst defect of the pass, and it was in the one module with zero
+  tests.** `cli/main.py` was 0% covered across its 178 statements (184 after the fix). It looked like the least
+  interesting thing to test - argument parsing - and it held the function that turns an
+  operator's authorization file into the scope the framework enforces. That function built the
+  scope from CLI arguments and then extended its lists from the YAML config, so every
+  config-supplied entry missed the matchers `__post_init__` had already compiled, and the
+  framework refused invasive actions against assets the operator had explicitly authorized.
+  **Lesson: a dataclass that compiles or validates in `__post_init__` must be constructed with
+  its final values. Mutating its lists afterwards looks harmless, changes what the public
+  fields report, and silently changes nothing about what the object actually enforces.** What
+  let it survive is that the failure was *partial*: passive discovery still worked, because an
+  empty scope permits it, so the defect only appeared once an assessment tried to act. A
+  failure mode that triggers on the second half of a workflow will outlive any amount of
+  reading - it needs a test that runs the whole path. That the module had no tests was not an
+  oversight I could see from inside it; 772 tests elsewhere made the suite feel thorough.
+
+- **A fix earlier in this pass made that worse, and the same fix cured it.** `validate()` used
+  to re-parse `authorized_networks` on every call, so it caught a malformed config entry even
+  though the compiled matchers were stale. Rewriting it to report the entries dropped at
+  construction - correct, and the reason dropped entries are now visible at all - made it blind
+  to anything added afterwards. Fixing the construction order fixed both. **Lesson: when a
+  function changes from recomputing to reading a cached result, every caller that mutates the
+  input afterwards becomes a latent defect. Grep for the mutation sites, not just the
+  callers.**
+
+- **`list.extend` on a string iterates its characters.** A config written as
+  `authorized_ssids: MyNetwork` instead of a one-item list would have extended the list with
+  `M`, `y`, `N`, `e`, ... - a scope authorizing nothing real, with no error, from a file that
+  parses as valid YAML. The values are now type-checked before merging. **Lesson: any code that
+  ingests a human-written config into a `list.extend` needs a type check, because the most
+  likely mistake produces a value of the right *shape* and the wrong *meaning*.**
+
+- **A gate observed only in its passing state is unverified, and this one was lying.**
+  `--cov-fail-under=69` exited 0 while the precise total was 68.671%. My first explanation -
+  coverage.py compares the rounded figure - was plausible, and wrong in a way that mattered.
+  Running the same flag at 68, 69 and 70 showed the real behaviour: pytest-cov decides
+  fail-under *twice*, and the two decisions disagree. The exit code uses
+  `should_fail_under(total, threshold, precision)` -> `round(total, 0) < threshold`; the
+  terminal message uses the raw `total < threshold`. At 69 that produces a red
+  `FAIL Required test coverage of 69% not reached. Total coverage: 68.67%` **and exit status
+  0**. The flag was not broken - it was printing a failure it was not enforcing, which is the
+  worst thing a gate can do, because it trains the reader to discount red text in the one
+  place built to produce it. I set the threshold to 68, the highest value at which both
+  comparisons agree in both environments (68.67% with scapy, 68.32% without), and wrote the
+  disagreement into the workflow comment.
+  **Lesson: when a gate's verdict and its output can come from different code paths, read both
+  paths and run the gate at a threshold on each side of the boundary. "It passed" and "it says
+  it passed" are different claims, and only the first one is worth recording.** I had also
+  nearly shipped the rounded-figure explanation into the changelog as fact; the extra
+  experiment is what stopped a plausible story from becoming documentation.
+
 - **Two coercion rules in one module, kept different on purpose.** `integral_int` refuses a
   fractional value; `validate_channel` coerces with `int()` and accepts `9.5` as channel 9.
   Unifying them would have been wrong: `validate_channel` is coupled to the policy scope gate,
@@ -1202,14 +1257,16 @@ Six commits, every fix mutation-checked.
 
 ### Success Metrics
 
-- 772 tests passing with scapy, 769 plus 3 skipped without (650 at 0.5.1). CI green on all
+- 791 tests passing with scapy, 788 plus 3 skipped without (650 at 0.5.1). CI green on all
   five jobs, including the mac80211_hwsim wireless job (12/12 capture and injection checks
-  against real radios).
+  against real radios). Coverage 68.67% with scapy and 68.32% without, now gated at 68;
+  `cli/main.py` 0% -> 55%.
 - Ruff: 722 findings -> 0 in the gated set, and CI now runs it on every push.
 - Mypy: 194 findings -> 33, with the residue gated against growth by `.mypy-baseline`.
-- Seven defects fixed, six from the silent-failure audit and one from the type checker. Each
-  mutation-checked; the airodump batch alone fails 13 tests when the dead loop is restored,
-  and breaking the channel-gate coupling fails 12 including an end-to-end scope case.
+- Eight defects fixed: six from the silent-failure audit, one from the type checker, one from
+  measuring coverage. Each mutation-checked; the airodump batch alone fails 13 tests when the
+  dead loop is restored, breaking the channel-gate coupling fails 12 including an end-to-end
+  scope case, and restoring the construct-then-mutate scope loading fails 4.
 - `scripts/exercise_framework.py` unchanged at 61/69 with 11 skipped across every commit in
   the pass - the 8 failures and 11 skips are the sandbox having no wireless hardware and none
   of the 52 declared tools installed, each recorded with its reason.
@@ -1221,8 +1278,14 @@ Six commits, every fix mutation-checked.
   judgement work; the ratchet stops the number rising.
 - **`E501` and `C901` are deferred, not fixed.** 574 over-length lines and 45 functions over
   the complexity budget, both recorded with their counts in `pyproject.toml`.
-- **Coverage is measured but not gated.** A threshold chosen without a baseline is a number
-  that gets adjusted until it passes.
+- **Coverage is gated at 68% against a measured 68.67%**, so the effective floor is 67.5% -
+  it catches erosion rather than a handful of statements. The threshold is a round number
+  below the measurement because of the pytest-cov exit-code/message disagreement described in
+  Challenges; a tighter gate would need `--cov-precision` set to match. The largest remaining
+  gap is the
+  tool adapters: 38% aggregate over 2271 statements, median 37% per file, 31 of 39 below 50%.
+  Their execution paths cannot run in a sandbox with none of the 52 declared tools installed,
+  so the number will not move much without hardware.
 - **The airodump screen-output fallback cannot attribute probe requests or associations.**
   The CSV writer can and is authoritative; the fallback reports that it cannot rather than
   guessing. Screen parsing is also verified against constructed fixtures in both known

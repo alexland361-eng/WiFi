@@ -823,6 +823,11 @@ instead of a broken one.
 The gate then found a seventh defect that no amount of reading had surfaced: a mixed
 IPv4/IPv6 authorized scope crashed the network scope check.
 
+Measuring coverage afterwards found an eighth, in the one module with no tests at all - and
+it was the most consequential of the eight: the documented `--config` path never reached the
+authorization checks, so the framework refused invasive actions against assets the operator
+had explicitly authorized.
+
 Every fix is mutation-checked - reverted in place, its tests confirmed to fail, restored.
 
 ### Fixed
@@ -879,6 +884,28 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   through a helper that reports instead of raising, and refuses a value that does not
   survive the round trip: `int(6.5)` is 6, a valid channel, so a naive coercion would have
   rounded a malformed declaration into an authorized one.
+- **A `--config` scope file never reached the authorization checks** - the most
+  consequential defect in this release, and the reason the CLI now has tests.
+  `load_scope_from_args` constructed the `AssessmentScope` from command-line arguments and
+  then extended its lists from the YAML config. But `AssessmentScope` compiles its matchers in
+  `__post_init__` - the SSID patterns, the normalized BSSID set, the parsed networks - so
+  config entries landed in the public lists and never in the matchers the checks actually
+  read. The documented config path therefore refused invasive actions against assets the
+  operator had *explicitly authorized* ("SSID=MyNetwork not in authorized scope", while that
+  is exactly what the config said), and refused every network action against authorized
+  networks. Passive discovery still worked, because an empty scope permits it, so the failure
+  only appeared once an assessment tried to act on something - which is why it survived
+  reading, review and 772 tests. Every source is now merged before the scope is constructed.
+
+  Two related defects went with it. `list.extend` on a string iterates its characters, so a
+  config written as `authorized_ssids: MyNetwork` instead of a one-item list would have
+  authorized the individual characters `M`, `y`, `N` ... - a scope matching nothing real while
+  looking like it had parsed; a config value that is not a list is now refused with a message
+  naming the key. And an unrecognized config key is reported rather than ignored, because a
+  typo like `authorized_ssid` silently narrows the authorization the operator believes they
+  granted. The same construction-order fix also restored `validate()`'s visibility: rewritten
+  earlier in this pass to report entries dropped *at construction*, it had become blind to
+  anything added afterwards.
 - **A malformed channel or signal was dropped with no trace in the world model**
   (carried forward as a known limitation from 0.5.1). `AccessPoint.update_from_evidence`
   and `WirelessClient.update_from_evidence` each caught `(ValueError, TypeError)` and
@@ -957,6 +984,27 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 - **`AssessmentScope.invalid_bssids` / `invalid_networks`**, recorded at construction and
   carried in `to_dict()`, so the audit trail shows what was requested *and* what was
   unusable without depending on a caller remembering to call `validate()` (`ccf7329`).
+- **19 CLI tests** (`tests/test_cli.py`), the first for `cli/main.py`, taking it from 0% to
+  55% statement coverage (178 statements, none covered, before the fix; 184 after). They pin the parser/loader
+  coupling - every attribute `load_scope_from_args` reads must exist on the parser's
+  namespace, which nothing else connects, since `--network` and `--host` are stored under
+  different dests than the loader's names - the config path, the string-instead-of-list
+  refusal, and `main()`'s dispatch, including that running with no scope warns the operator
+  rather than silently taking the widest reading.
+- **Coverage gated at its measured baseline** (`--cov-fail-under=68` in the CI coverage
+  step). The total is 68.67% with scapy, which this job installs, and 68.32% without. The
+  threshold is 68 rather than 69 because of a disagreement inside pytest-cov, recorded in the
+  workflow comment: the exit code compares `round(total, precision=0)` against the threshold
+  while the terminal message compares the raw total, so at 69 the run prints a red "FAIL
+  Required test coverage of 69% not reached. Total coverage: 68.67%" *and* exits 0. A gate
+  that reports failure while passing is worse than no gate - it teaches an operator to
+  distrust red text in the one place designed to produce it. 68 is the highest threshold at
+  which both comparisons agree in both environments, so the effective floor is 67.5%: enough
+  to catch a module losing its tests (`cli/main.py` alone is 184 statements, ~2%), not enough
+  to catch a handful. All three thresholds were run to confirm the behaviour rather than
+  inferred from the source: 68 passes green, 69 passes red, 70 fails red.
+- **`cli.main.SCOPE_CONFIG_KEYS`**, the recognized `--config` keys, so an unrecognized one
+  can be reported.
 - **`utils.validation.integral_int(value)`** - a whole number or `None`, refusing rather
   than truncating. Used by both `AssessmentScope._channel_number` and the world model
   entities, so a channel *declared* in an authorization scope and a channel *observed* into
@@ -994,7 +1042,10 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 
 ### Tests
 
-- 772 passing with scapy installed, 769 plus 3 skipped without. Up from 650 at 0.5.1.
+- 791 passing with scapy installed, 788 plus 3 skipped without. Up from 650 at 0.5.1.
+  Total statement coverage 68.67% with scapy (9413 statements, 2949 missed), 68.32% without
+  (2982 missed) - reported by coverage.py as 69% and 68% respectively, which is why the gate
+  is set at 68.
   CI green on all five jobs: unit tests on py3.10/3.11/3.12, the new lint and type gate, and
   the mac80211_hwsim wireless job (12/12 capture and injection checks against real radios).
 - `scripts/exercise_framework.py` reports 61/69 with 11 skipped, unchanged - the 8 failures
@@ -1003,8 +1054,10 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 - New tests: 16 for parse-problem reporting, 17 for storage permissions, 18 for malformed
   scope entries and `validate()`, 26 for the channel scope-gate coupling, 18 for airodump
   screen output and CSV failures, 14 for declared-input enforcement, 6 for mixed-family
-  scope, 11 for unreadable world-model values, 27 for `integral_int`. Each batch
-  mutation-checked - restoring the three silent `except: pass` handlers fails 9 tests.
+  scope, 11 for unreadable world-model values, 27 for `integral_int`, 19 for the CLI. Each
+  batch mutation-checked - restoring the three silent `except: pass` handlers fails 9 tests,
+  and restoring the construct-then-mutate scope loading fails 4, including the config
+  regression test.
 - The channel scope gate skips a channel it cannot coerce to `int()`, with a comment saying
   parameter validation reports it. That is correct today - both sides do the identical
   conversion catching the identical exceptions - but nothing pinned it, and if parameter

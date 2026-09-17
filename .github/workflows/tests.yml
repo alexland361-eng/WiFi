@@ -41,8 +41,18 @@ jobs:
       - name: Run test suite
         run: python -m pytest -q
 
+      # Ratcheted at the measured figure rather than an aspirational one: 68.67% with scapy
+      # (this job installs `.[full]`), 68.32% without.
+      #
+      # 68, not 69. pytest-cov makes the fail-under decision twice and the two disagree:
+      # the exit code uses `round(total, precision=0) < fail_under`, while the terminal
+      # message uses the raw comparison. At 69 that yields a red "FAIL Required test coverage
+      # of 69% not reached. Total coverage: 68.67%" *and* exit status 0 - a gate that reports
+      # failure while passing, which is worse than no gate. 68 is the highest threshold at
+      # which both agree in both environments, giving an effective floor of 67.5%. Verified
+      # empirically at 68 (rc=0, green), 69 (rc=0, red) and 70 (rc=1, red).
       - name: Coverage
-        run: python -m pytest -q --cov=wifi_framework --cov-report=term-missing
+        run: python -m pytest -q --cov=wifi_framework --cov-report=term-missing --cov-fail-under=68
 
   # Lint and type gate. ruff is blocking on everything the project selects except the
   # two categories recorded as deferred debt in pyproject.toml (E501 line length, C901
