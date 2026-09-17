@@ -29,7 +29,6 @@ import random
 import re
 import shutil
 import socket
-import struct
 import subprocess
 import sys
 import threading
@@ -219,23 +218,25 @@ def main() -> int:
         injected = 0
         inject_errors: List[str] = []
         try:
-            from scapy.layers.dot11 import Dot11, Dot11ProbeReq
-            from scapy.layers.l2 import LLC, RadioTap, SNAP
+            # RadioTap is in scapy.layers.dot11, not scapy.layers.l2.
+            from scapy.layers.dot11 import Dot11, Dot11Elt, Dot11ProbeReq, RadioTap
 
+            src_mac = "02:00:00:00:00:%02x" % random.randint(0, 255)
             for n in range(FRAME_COUNT):
+                # A well-formed probe request with the marker as its SSID: the
+                # driver accepts it, and the marker is trivially findable in the
+                # raw bytes the independent capture records.
                 frame = (
                     RadioTap()
-                    / Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2="02:00:00:00:00:ff",
-                            addr3="ff:ff:ff:ff:ff:ff")
+                    / Dot11(
+                        type=0,
+                        subtype=8,
+                        addr1="ff:ff:ff:ff:ff:ff",
+                        addr2=src_mac,
+                        addr3="ff:ff:ff:ff:ff:ff",
+                    )
                     / Dot11ProbeReq()
-                    # The marker rides in a vendor-specific information element so
-                    # it is unmistakably ours and cannot collide with real traffic.
-                    / LLC(dsap=0xAA, ssap=0xAA, ctrl=0x03)
-                    / SNAP(OUI=b"\x00\x50\xf2", code=0x10)
-                    / struct.pack(">B", 0xDD)
-                    / struct.pack(">BB", len(marker) + 3, 0x00)
-                    / marker
-                    / struct.pack(">B", n)
+                    / Dot11Elt(ID="SSID", info=marker + b"-%d" % n)
                 )
                 scapy.sendp(frame, iface=inj_iface, verbose=False)
                 injected += 1
