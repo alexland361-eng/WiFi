@@ -298,6 +298,11 @@ for the milestone plan this release completes.
 - `ActionPolicy` no longer double-reports a missing interface: interface requirements are owned by
   the capability stage (which also knows whether it exists, is up and supports monitor mode), so
   an environmental gap yields a deferral the engine can act on instead of a hard rejection
+- `DecisionEngine.accept_proposal` silently substituted a different tool when a proposal named an
+  implementation that is not available (an AI proposing `reaver` would get `wash` with no record of
+  the swap). The substitution is still performed - running an available alternative is legitimate -
+  but it is now recorded in the returned problems, which the audit trail persists either way.
+  "Why this tool and not another" is one of the questions the trail has to answer
 - Contracts built in-process now coerce nested fields to their declared types exactly as parsed
   ones do, so consumers never have to defend against both shapes
 
@@ -323,15 +328,21 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 242 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 264 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
 - New suites: `test_contracts.py` (49), `test_policy.py` (30), `test_world_state.py` (34),
   `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
-  `test_contract_pipeline.py` (25), `test_audit.py` (18)
+  `test_contract_pipeline.py` (25), `test_decision_engine.py` (22), `test_audit.py` (18)
 - `test_audit.py` proves the M6 acceptance criterion directly: the correlation chain reaches
   `finding_ids` and `verification_ids` for every finding, findings from other executions are not
   falsely linked, and an unattributed execution stays honestly unattributed
+- `test_decision_engine.py` covers the AI-layer seam: the planning context is a narrowed projection
+  that forwards no raw observations and no commands, out-of-scope assets are excluded, bulk
+  sections are truncated, and `accept_proposal` refuses structurally invalid, cross-assessment and
+  unfulfillable proposals while resolving category-level ones. Its final test proves
+  **acceptance is not authorisation** - a proposal the Decision Engine accepts is then refused by
+  the policy layer on scope
 - `test_contract_pipeline.py` drives the **production** adapters, parsers, gateway and policy
   through real `subprocess` calls against stub binaries on `PATH`, covering success, non-zero
   exit, permission failure, timeout, malformed output, missing tool, scope refusal, unsafe

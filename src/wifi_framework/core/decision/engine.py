@@ -273,6 +273,14 @@ class DecisionEngine:
             if resolved is None:
                 problems.append(f"no available capability can fulfil '{proposal.capability}'")
                 return None, problems
+            if proposal.implementation and resolved.name != proposal.implementation:
+                # The proposal asked for a specific tool that is not available. Running a
+                # substitute is legitimate, but the swap must be visible in the audit trail:
+                # "why this tool and not another" is one of the questions the trail answers.
+                problems.append(
+                    f"proposal named implementation '{proposal.implementation}' which is not "
+                    f"available; resolved to '{resolved.name}' instead"
+                )
             implementation = resolved.name
 
         known_gaps = {item.id for item in world_state.uncertainties}

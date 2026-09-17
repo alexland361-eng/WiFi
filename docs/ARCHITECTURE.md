@@ -544,7 +544,7 @@ class AssessmentEngine:
 
 ## Testing
 
-242 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+264 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
 `pyproject.toml`, so no install step is needed):
 
 | Suite | Tests | Covers |
@@ -555,6 +555,7 @@ class AssessmentEngine:
 | `test_verification_engine.py` | 29 | Noisy-OR aggregation, all six verification states, freshness, contradiction |
 | `test_evidence_engine.py` | 28 | Provenance, scope tagging, verification-request generation, no fabrication |
 | `test_contract_pipeline.py` | 25 | The full loop against a **real subprocess** (stub binaries on `PATH`) |
+| `test_decision_engine.py` | 22 | AI-layer seam: narrowed planning context, proposal intake, acceptance ≠ authorisation |
 | `test_audit.py` | 18 | Contract trail, refusal logging, and the correlation chain reaching findings |
 | `test_scope.py` | 8 | Pre-0.4.0 scope tests plus 5 additive regressions for the scope fix |
 | `test_models/parsers/adapters/planner/executor.py` | 21 | Pre-0.4.0 suites, unmodified |
