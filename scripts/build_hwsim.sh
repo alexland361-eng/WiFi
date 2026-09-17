@@ -75,8 +75,34 @@ echo "built: $(ls -l mac80211_hwsim.ko | awk '{print $5}') bytes"
 modinfo ./mac80211_hwsim.ko 2>/dev/null | grep -E '^(vermagic|depends|license):' || true
 
 echo "--- loading with radios=$RADIOS"
-if ! sudo insmod ./mac80211_hwsim.ko radios="$RADIOS" 2>&1; then
-  note "insmod failed - likely symbol or vermagic mismatch with $KREL"
+echo "built vermagic : $(modinfo -F vermagic ./mac80211_hwsim.ko 2>/dev/null || echo unknown)"
+echo "running kernel : $KREL"
+echo "module deps    : $(modinfo -F depends ./mac80211_hwsim.ko 2>/dev/null || echo unknown)"
+
+if ! INSMOD_OUT=$(sudo insmod ./mac80211_hwsim.ko radios="$RADIOS" 2>&1); then
+  echo "$INSMOD_OUT"
+  # The kernel's own reason (unknown symbol, CRC disagreement, bad vermagic)
+  # only appears in dmesg, and job logs are not reachable from here, so both
+  # go out as annotations.
+  DMESG_OUT=$(sudo dmesg 2>/dev/null | tail -25 || echo "dmesg unavailable")
+  echo "--- dmesg tail ---"
+  echo "$DMESG_OUT"
+
+  # Pinpoint the exact symbols the module needs but the running kernel lacks.
+  if command -v nm >/dev/null 2>&1; then
+    MISSING=$(comm -23 \
+      <(nm -u ./mac80211_hwsim.ko 2>/dev/null | awk '{print $NF}' | grep -v '^$' | sort -u) \
+      <(sudo awk '{print $3}' /proc/kallsyms 2>/dev/null | sort -u) || true)
+    echo "--- symbols required by the module but absent from the running kernel ---"
+    echo "${MISSING:-  (none - rejection is not a missing symbol)}"
+    if [ -n "$MISSING" ]; then
+      echo "::error title=insmod-missing-symbols::$(echo "$MISSING" | tr '\n' ' ' | cut -c1-900)"
+    fi
+  fi
+
+  note "insmod rejected; built vermagic=$(modinfo -F vermagic ./mac80211_hwsim.ko 2>/dev/null || echo unknown) running=$KREL"
+  echo "::error title=insmod-stderr::$(echo "$INSMOD_OUT" | tr '\n' ' ' | cut -c1-900)"
+  echo "::error title=insmod-dmesg::$(echo "$DMESG_OUT" | grep -iE 'hwsim|symbol|version|module' | tr '\n' ' ' | cut -c1-900)"
   fail "insmod mac80211_hwsim.ko failed"
 fi
 
