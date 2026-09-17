@@ -282,7 +282,7 @@ other through direct method calls. The specification's core architecture require
 communicating **only** through explicit, versioned data contracts, with the rule that "no engine
 may know how another engine works internally". This session implemented that layer: ten contracts,
 six subsystem boundaries, an orchestrating loop rewired through them, and a test suite that grew
-from 24 to 264 tests.
+from 24 to 373 tests.
 
 Plan: `docs/CONTRACT_LAYER_PLAN.md` (milestones M1-M8, all complete).
 Reference: `docs/DATA_CONTRACTS.md`.
@@ -402,6 +402,75 @@ test that failed was written from the documentation of intent, not from the code
 why it caught the divergence. Note also that `accept_proposal` has no production caller yet, so the
 fix changed no live control flow; that had to be checked before changing it, not assumed.
 
+#### 10. A coverage report led to an authorisation-widening bug in scope handling
+
+With `pytest-cov` installed I measured coverage instead of assuming it. `utils/validation.py` came
+back at **37%** - the module that decides what counts as a valid BSSID, interface name and IP
+address. That is the wrong place for a gap, so I wrote `tests/test_validation.py`.
+
+Three of the four failures were not my test being wrong. They were the code:
+
+1. `normalize_mac` cleaned an address with `re.sub(r"[^0-9a-fA-F]", "", mac)` - strip *everything*
+   non-hex, then accept whatever 12 digits remained. So `AABBCCDDEEFFGG` normalised to
+   `AA:BB:CC:DD:EE:FF`, an address nobody wrote.
+2. The patterns used `^...$`, and in Python `$` also matches *before a trailing newline*.
+   `validate_interface("wlan0\n")` returned `(True, "")` - and the name is interpolated into
+   `/sys/class/net/{interface}` and into argv exactly as written, so the value checked was not the
+   value used.
+3. `.` and `..` matched the interface character class (dots are legitimate: `eth0.100` is a VLAN
+   subinterface), and `/sys/class/net/..` **exists**, so a traversal value reported itself as a
+   present interface.
+
+Finding 1 mattered most, and only because I followed the caller graph rather than stopping at the
+utility. `AssessmentScope` kept its **own duplicate** `_normalize_mac`, and that copy builds the
+allowlist deciding which access points may be attacked. Demonstrated before the fix:
+
+```
+AssessmentScope(authorized_bssids=["AABBCCDDEEFFGG"]).validate()   -> []          # no error
+                                     ...is_bssid_authorized("AA:BB:CC:DD:EE:FF") -> True
+```
+
+A typo in an operator's scope file silently authorised a *different* network, validation reported
+nothing wrong, and the CLI ran. For a framework whose entire purpose is keeping an assessment inside
+its authorised scope, that is the worst possible failure mode: it fails open, quietly, in the one
+component that is supposed to fail closed.
+
+The fix was to narrow normalisation to removing only what cannot change *which* address a value
+denotes - surrounding whitespace and the two separators - and reject everything else; to delete the
+duplicate so scope delegates to the shared function; and to make `validate_mac` delegate to
+`normalize_mac` so "is this a MAC" has one answer. The same input now yields
+`['Invalid BSSID format: AABBCCDDEEFFGG']`, an empty allowlist, CLI exit 1 and no report written.
+
+Two lessons I want to keep. First, **a duplicated validation rule is a latent divergence**: the bug
+lived in the copy that mattered, and the original looked fine. Second, when tightening a validator
+the question is not "what is malformed" but **"what may I safely discard without changing the
+meaning"**. Whitespace and separators qualify; arbitrary characters do not, because discarding them
+manufactures a different identifier. That principle also settled the next question.
+
+#### 11. Deleting a no-op was better than implementing it
+
+`utils/validation.py` also contained `sanitize_command_arg`: it looped over shell metacharacters,
+hit `pass` for each match, and returned its argument unchanged. Zero callers, absent from `__all__`,
+referenced by no test - yet **four documents cited "sanitized args" as a security control**, twice
+in the changelog alone.
+
+The tempting fix is to make it work. That would have been wrong, for the same reason as finding 1
+above. Commands reach `subprocess.run` as an argv list and are never parsed by a shell, so there is
+nothing to escape; and *rewriting* a target identifier is actively dangerous - an SSID legitimately
+contains `$` or `&`, so a "sanitised" SSID would aim the assessment at a network the operator never
+authorised. Silently mutating an identifier that decides what gets attacked is the defect, whichever
+function it happens to live in. The correct control already existed and was tested: `ActionPolicy`
+**rejects** such values non-retriably.
+
+So the function was deleted, the forbidden-character sets moved to one documented definition that
+`ActionPolicy` imports instead of redefining, and the documents were corrected. The 0.1.0 changelog
+entries were annotated rather than deleted: a record of a claim being made and later corrected is
+more useful than a changelog quietly edited to look right.
+
+The general rule: **a function whose name promises a security property is worse than no function at
+all** when the body does not deliver it, because it stops the next reader from looking for the real
+control.
+
 ### Technical Decisions
 
 1. **`contracts/` imports nothing from `core/`.** This one dependency rule is what makes engines
@@ -448,7 +517,7 @@ fix changed no live control flow; that had to be checked before changing it, not
 
 - [x] M1-M8 of `docs/CONTRACT_LAYER_PLAN.md` complete
 - [x] Ten contracts, all at version 1.0, each with a producer, a consumer and tests
-- [x] 264 tests pass in ~4s with no wireless hardware and no Kali tools installed
+- [x] 373 tests pass in ~4s with no wireless hardware and no Kali tools installed
 - [x] The 24 pre-existing tests pass **unmodified** (regression gate for M5)
 - [x] End-to-end loop proven against a real subprocess, including failure, timeout, missing tool,
       scope refusal and unsafe-parameter refusal
@@ -457,10 +526,17 @@ fix changed no live control flow; that had to be checked before changing it, not
 - [x] CLI unchanged in interface: `--discover-only`, `--ssid`, `--max-iterations`, `--output` all
       behave as before, with honest `unsupported` reporting where tools are absent
 - [x] No new runtime dependency (`pyyaml` only); no `shell=True` anywhere
-- [x] Five real defects found and fixed by the new tests (planning-view crash, scope hole,
-      failure misattribution, contract shape divergence, silent tool substitution at the AI seam)
+- [x] Eleven real defects found and fixed by the new tests:
+      planning-view crash, scope hole, failure misattribution, contract shape divergence, silent
+      tool substitution at the AI seam, **malformed scope BSSID authorising a different network**,
+      duplicated-and-drifted MAC normalisation in the authorisation path, `validate_mac` and
+      `normalize_mac` disagreeing, trailing newline accepted in an interface name (`$` vs `\Z`),
+      `.`/`..` accepted as interface names, and a no-op `sanitize_command_arg` that four documents
+      cited as a security control
 - [x] Every acceptance criterion in `docs/CONTRACT_LAYER_PLAN.md` section 7 is backed by a named
       test, not by inspection
+- [x] `utils/validation.py` - the module that decides what a valid BSSID, interface and address is -
+      went from 37% to 99% statement coverage
 
 ### Next Steps
 

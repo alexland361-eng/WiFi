@@ -25,6 +25,8 @@ from ...contracts.envelope import EngineId
 from ...contracts.validation import ValidationIssue, ValidationLevel
 from ...utils.system import is_root
 from ...utils.validation import (
+    CONTROL_CHARS as _CONTROL_CHARS,
+    SHELL_METACHARACTERS as _METACHARACTERS,
     validate_channel,
     validate_cidr,
     validate_interface,
@@ -35,10 +37,10 @@ from ...utils.validation import (
 from ..models.assessment_state import AssessmentState
 from ..models.scope import AssessmentScope, ScopeEnforcer
 
-#: Characters that must never appear in a parameter value.
-_CONTROL_CHARS = ("\n", "\r", "\x00")
-#: Metacharacters that have no business in a value passed to a wireless tool.
-_METACHARACTERS = (";", "&", "|", "`", "$(", ">", "<")
+# The forbidden-character sets are defined once, in utils.validation, and imported above: they are
+# the documented statement of the rule, and keeping a second copy here would let the enforcement and
+# the documentation drift apart. Values matching them are rejected, never rewritten - see the
+# comment at the definition site for why sanitising a target identifier would be worse than refusing.
 _HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9._-]+$")
 
 #: Parameter names that identify a wireless asset.

@@ -540,15 +540,19 @@ class AssessmentEngine:
 - Input validation for MAC, SSID, channel, interface, IP, CIDR
 - Privilege checks
 - Scope enforcement for invasive
-- Sanitization defense in depth
+- Reject rather than rewrite: `utils.validation` defines the forbidden character sets once
+  (`CONTROL_CHARS`, `SHELL_METACHARACTERS`) and `ActionPolicy` imports them, turning a match into a
+  non-retriable rejection. Argument values are never mutated - a rewritten BSSID or SSID would
+  redirect the assessment at a target the operator did not authorise
 
 ## Testing
 
-264 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+373 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
 `pyproject.toml`, so no install step is needed):
 
 | Suite | Tests | Covers |
 |---|---|---|
+| `test_validation.py` | 109 | Input validators, the single-sourced forbidden-character rule, no-shell AST sweep, and that a malformed scope BSSID authorises nothing |
 | `test_contracts.py` | 49 | Envelope, both wire forms, version negotiation, digests, every semantic rule |
 | `test_world_state.py` | 34 | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
 | `test_policy.py` | 30 | Scope / capability / parameter stages, fail-closed invasiveness, refusals |

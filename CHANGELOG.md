@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Utils:
   - system: OS info, root check, tool availability, interface existence, run_command with timeout, version parsing
   - validation: MAC, SSID, channel, interface, IP, CIDR, parameter validation, sanitization
+    *(correction, 0.4.0: the `sanitize_command_arg` helper shipped here was a no-op and was never
+    called - the sanitisation control this line claims did not exist. Removed in 0.4.0; the real
+    control is `ActionPolicy` rejecting unsafe values. See the 0.4.0 Security section.)*
 - Config:
   - default.yaml with example scope
 - Documentation:
@@ -72,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Privilege checks before execution
 - Scope enforcement for invasive actions
 - Sanitization for command args (defense in depth)
+  *(correction, 0.4.0: never implemented - see the note above and the 0.4.0 Security section)*
 
 ### Operational Integrity
 - Every operational capability corresponds to functioning implementation
@@ -283,6 +287,48 @@ for the milestone plan this release completes.
 
 ### Fixed
 
+- **A malformed BSSID in the operator's scope silently authorised a different network**
+  (`core/models/scope.py`, `utils/validation.py`). Both `AssessmentScope._normalize_mac` and
+  `utils.validation.normalize_mac` "cleaned" an address by stripping *every* non-hex character with
+  `re.sub(r"[^0-9a-fA-F]", "", mac)` and then accepting whatever 12 hex digits remained. So
+  `AABBCCDDEEFFGG` normalised to `AA:BB:CC:DD:EE:FF` - an address nobody wrote.
+
+  Because that copy sits in the authorisation path, the consequence was scope widening: the
+  allowlist ended up containing a network the operator never named, `AssessmentScope.validate()`
+  returned **no error** (the normalisation had "succeeded"), and the CLI proceeded. Demonstrated
+  before the fix:
+
+  ```
+  AssessmentScope(authorized_bssids=["AABBCCDDEEFFGG"]).validate()          -> []
+  ...is_bssid_authorized("AA:BB:CC:DD:EE:FF")                               -> True
+  ```
+
+  Normalisation now removes only surrounding whitespace and the two separator characters - the
+  things that cannot change *which* address a value denotes - and rejects everything else. The same
+  input now yields `['Invalid BSSID format: AABBCCDDEEFFGG']`, an empty allowlist, and CLI exit 1
+  with no report written. Refusing a malformed scope entry is the only safe behaviour for an
+  identifier that decides what may be attacked; guessing at it is how an assessment ends up touching
+  a neighbour's access point.
+- **`scope.py` kept a second, drifted copy of MAC normalisation.** `AssessmentScope._normalize_mac`
+  and `utils.validation.normalize_mac` were independent implementations of the same rule, which is
+  how the bug above existed in the authorisation path while `validate_mac` answered differently for
+  identical input. The scope method now delegates to the shared function, so the allowlist and the
+  parameter validator cannot disagree. `tests/test_validation.py::test_scope_and_validator_agree_on_what_a_bssid_is`
+  asserts the agreement across twelve spellings, valid and invalid.
+- **`validate_mac` and `normalize_mac` disagreed about what a MAC address is.** `validate_mac`
+  matched a regex and then fell back to its own character-stripping count, so it accepted inputs the
+  normaliser would reshape. `validate_mac` now delegates to `normalize_mac`: one definition, one
+  answer.
+- **A trailing newline was accepted in an interface name** (`utils/validation.py`). The pattern used
+  `^...$`, and in Python `$` also matches immediately *before a trailing newline*, so
+  `validate_interface("wlan0\n")` returned `(True, "")`. Interface names are interpolated into
+  `/sys/class/net/{interface}` and passed to tools as written, so the value checked was not the
+  value used. Patterns are now anchored `\A...\Z`.
+- **`.` and `..` were accepted as interface names.** Both match the legitimate character class
+  (dots are valid - `eth0.100` is a VLAN subinterface), and `check_interface_exists` builds
+  `/sys/class/net/{interface}`, where `/sys/class/net/..` **exists** - so a traversal value was
+  reported as a present interface. A name whose dot-separated segments include an empty one is now
+  refused, which rejects `.` and `..` while leaving `eth0.100` and `wlan0mon` valid.
 - **`WorldStateView` crashed on any observation** (`core/decision/state_view.py` read
   `observation.tags`, a field `ObservationRef` does not have). Every assessment that had observed
   anything failed at planning; tags are now rebuilt from the contract's `in_scope`/`stale`
@@ -316,6 +362,30 @@ for the milestone plan this release completes.
   record their own invocations
 - Still no `shell=True` anywhere; commands remain argument lists and `pyyaml` remains the only
   third-party runtime dependency
+- **Removed `utils.validation.sanitize_command_arg`, a no-op that documented a control which did
+  not exist.** The function iterated over a list of shell metacharacters, discarded each match with
+  `pass`, and returned its argument unchanged. It had zero callers, was absent from
+  `utils/__init__.py`'s `__all__`, and was referenced by no test - yet four documents (README,
+  ARCHITECTURE, IMPLEMENTATION_PLAN twice, and the 0.1.0 changelog twice) cited "sanitized args" as
+  a security control. A reader auditing this framework's injection defences would have found a
+  function whose name promised protection and whose body delivered none.
+
+  It was **not** replaced with a working sanitiser, because sanitising here would be the wrong
+  control. Commands reach `subprocess.run` as an argv list and are never parsed by a shell, so
+  there is nothing to escape; and rewriting a target identifier is actively dangerous - an SSID
+  legitimately contains `$` or `&`, so a "sanitised" SSID would aim the assessment at a network the
+  operator never authorised. The correct control is the one already implemented and tested:
+  `ActionPolicy._check_value` **rejects** the action (non-retriably) on control characters, shell
+  metacharacters, `-`-prefixed values and path traversal.
+
+  The forbidden-character sets now live in one place, `utils.validation.CONTROL_CHARS` and
+  `SHELL_METACHARACTERS`, which `ActionPolicy` imports instead of redefining - previously the two
+  copies could drift, and the documentation described neither. `tests/test_validation.py` pins the
+  arrangement: the sets are non-empty, the policy layer's constants *are* those objects, no
+  `sanitize_command_arg` exists, and no module in the package passes `shell=True`.
+
+  The 0.1.0 changelog entries were annotated rather than deleted: the record of a claim being made
+  and later corrected is more useful than a changelog that was quietly edited to look right.
 
 ### Documentation
 
@@ -328,12 +398,19 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 264 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 373 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
-- New suites: `test_contracts.py` (49), `test_policy.py` (30), `test_world_state.py` (34),
-  `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
+- New suites: `test_validation.py` (109), `test_contracts.py` (49), `test_world_state.py` (34),
+  `test_policy.py` (30), `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
   `test_contract_pipeline.py` (25), `test_decision_engine.py` (22), `test_audit.py` (18)
+- `test_validation.py` covers the input validators and the security fixes above. Three of its tests
+  are structural guards rather than behaviour checks: the forbidden-character sets are *the same
+  objects* the policy layer uses (identity, not equality - a duplicate tuple would pass an equality
+  check and then drift), no `sanitize_command_arg` exists to be mistaken for a control, and no
+  module in the package passes `shell=True` to any call, verified by walking the AST of all 119
+  modules so the phrase appearing in a comment or string cannot produce a false pass or a false
+  alarm. `utils/validation.py` goes from 37% to 99% statement coverage
 - `test_audit.py` proves the M6 acceptance criterion directly: the correlation chain reaches
   `finding_ids` and `verification_ids` for every finding, findings from other executions are not
   falsely linked, and an unattributed execution stays honestly unattributed

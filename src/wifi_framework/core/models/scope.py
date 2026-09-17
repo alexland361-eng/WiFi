@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Set
 
+from ...utils.validation import normalize_mac
+
 
 @dataclass
 class AssessmentScope:
@@ -70,15 +72,21 @@ class AssessmentScope:
 
     @staticmethod
     def _normalize_mac(mac: str) -> Optional[str]:
-        """Normalize MAC to upper colon format."""
-        if not mac:
-            return None
-        # Remove separators and lower
-        cleaned = re.sub(r"[^0-9a-fA-F]", "", mac)
-        if len(cleaned) != 12:
-            return None
-        # Format as XX:XX:XX:XX:XX:XX upper
-        return ":".join(cleaned[i:i+2] for i in range(0, 12, 2)).upper()
+        """
+        Normalize a BSSID to upper colon format, or ``None`` if it is not a well-formed address.
+
+        Delegates to :func:`wifi_framework.utils.validation.normalize_mac` rather than keeping a
+        second implementation here. This copy sits in the authorisation path - it builds the
+        allowlist that decides which access points may be attacked - and it had drifted into a
+        security bug: it stripped *every* non-hex character, so a malformed entry such as
+        ``AABBCCDDEEFFGG`` was silently normalised to ``AA:BB:CC:DD:EE:FF``. The scope then
+        authorised a network the operator never named, and :meth:`validate` reported no error
+        because the normalisation had "succeeded".
+
+        One shared definition means the scope allowlist and the rest of the framework cannot
+        disagree about what counts as a BSSID.
+        """
+        return normalize_mac(mac)
 
     def is_ssid_authorized(self, ssid: str) -> bool:
         """Check if SSID is within authorized scope."""

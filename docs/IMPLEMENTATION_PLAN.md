@@ -101,7 +101,9 @@ Raw Tool → Adapter → Capability → Parser → Evidence → World Model → 
 - **Production-ready only**: No placeholders, no TODO, complete implementations
 - **Type hints**: Throughout, for IDE and maintainability
 - **Docstrings**: Explaining operational philosophy and purpose
-- **Security-first**: No shell=True, input validation, privilege checks, sanitization
+- **Security-first**: No shell=True, input validation, privilege checks; unsafe argument
+  values are rejected rather than rewritten (see `utils.validation.CONTROL_CHARS` /
+  `SHELL_METACHARACTERS`, enforced by `ActionPolicy`)
 - **Failure awareness**: Timeout, invalid input, unavailable resources, partial failures considered
 - **Minimal justified changes**: Simplest implementation satisfying requirements, no unnecessary abstractions
 - **Preserve existing work**: Never overwrite unrelated user work
@@ -142,7 +144,7 @@ Raw Tool → Adapter → Capability → Parser → Evidence → World Model → 
 | Tool not installed (e.g., airodump-ng) | Capability unavailable | High | Registry reports unavailable explicitly, preserves in state, planner avoids; CLI shows status; not counted as failure |
 | Parser fails on unexpected output format | Evidence not created, assessment incomplete | Medium | Parsers have fallback (generic evidence), try multiple output formats (nmap has 3 parsers), error handling with try/except, never fabricate |
 | Scope creep - adding unnecessary features | Complexity, maintenance burden | Medium | Strictly follow operational philosophy, record improvements as recommendations not implementations, minimal justified changes |
-| Security - shell injection via params | Critical - RCE | Low | No shell=True, only list args, input validation for MAC, IP, channel, interface, sanitization defense in depth |
+| Security - shell injection via params | Critical - RCE | Low | No shell=True, only list args, input validation for MAC, IP, channel, interface; `ActionPolicy` rejects control characters, shell metacharacters, `-`-prefixed values and path traversal as non-retriable |
 | Privilege escalation - requires root but not running as root | Execution fails | Medium | Check is_root before execution, report insufficient_privileges, failure_conditions includes it |
 | Timeout - tool runs indefinitely (e.g., airodump-ng) | Hangs assessment | High | Executor has timeout param, run_command handles TimeoutExpired returning 124, failure_conditions includes timeout, cleanup temp files |
 | Experience store corruption | Learning affected | Low | JSONL append-only, try/except on load, ignore malformed lines |
@@ -281,7 +283,7 @@ EOF
 
 ### Step 3: Utils (30 min)
 - system: get_os_info, is_root, check_tool_available (shutil.which + version flags), check_interface_exists (/sys/class/net), run_command (subprocess.run timeout)
-- validation: MAC regex, normalize_mac, SSID, channel, interface, IP, CIDR, parameters, sanitization
+- validation: MAC regex, normalize_mac, SSID, channel, interface, IP, CIDR, parameters, forbidden-character sets (rejected by policy, not rewritten)
 
 ### Step 4: Execution Layer (2 hours)
 - ToolAdapterBase: abstract build_command, parse_output, check_requirements (OS, tool, version, interface, privileges, deps, custom), validate_parameters, execute (validate→check→build→run→parse→interpret failure), interpret_failure

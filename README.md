@@ -430,7 +430,7 @@ config/
 ├── default.yaml
 └── capabilities/
 
-tests/                 # 264 tests
+tests/                 # 373 tests
 docs/
 ```
 
@@ -446,7 +446,7 @@ pytest --cov=wifi_framework
 checkout with no install step:
 
 ```bash
-python -m pytest          # 264 tests, ~4s
+python -m pytest          # 373 tests, ~4s
 ```
 
 The suite requires **no wireless hardware and no Kali tools**: capability availability is supplied
@@ -458,7 +458,12 @@ fixtures - they exercise framework code and say nothing about any real environme
 
 - Production-ready, no placeholders
 - Real tool execution with timeout handling, failure reporting
-- Input validation, security-first (no shell=True, sanitized args)
+- Input validation, security-first: commands are argv lists and `shell=True` is never used, so no
+  argument is ever interpreted by a shell. Unsafe values are **rejected, not rewritten** - the
+  policy layer refuses control characters, shell metacharacters, `-`-prefixed values (argument
+  injection) and path traversal as non-retriable. Silently "sanitizing" a target identifier would
+  be worse: an SSID legitimately contains `$` or `&`, and mutating it would aim the assessment at a
+  network the operator never authorised
 - Capability-aware execution
 - Scope enforcement
 - Auditability
