@@ -495,3 +495,98 @@ def test_supported_channels_survives_malformed_frequency_lines(monkeypatch):
     im = InterfaceManager(ToolManager(CapabilityRegistry()))
 
     assert im.get_supported_channels("wlan0") == [1, 11]
+
+
+# Current `iw list` does not enumerate interfaces at all, so the owning phy can
+# only be resolved from sysfs. This is the shape CI reported from the runner.
+IW_LIST_NO_INTERFACE_LINES = """Wiphy phy0
+\twiphy index: 0
+\tmax # scan SSIDs: 4
+\tFrequencies:
+\t\t* 2412 MHz [1] (20.0 dBm)
+\t\t* 2437 MHz [6] (20.0 dBm)
+\t\t* 2472 MHz [13] (disabled)
+Wiphy phy1
+\twiphy index: 1
+\tmax # scan SSIDs: 4
+\tFrequencies:
+\t\t* 5180 MHz [36] (20.0 dBm)
+\t\t* 5745 MHz [149] (20.0 dBm)
+"""
+
+
+def test_phy_name_resolved_from_sysfs(monkeypatch):
+    monkeypatch.setattr(
+        imod.os,
+        "readlink",
+        lambda path: "../../devices/platform/mac80211_hwsim.0/ieee80211/phy1",
+    )
+    assert InterfaceManager._phy_name_for_interface("wlan1mon") == "phy1"
+
+
+def test_phy_name_is_none_when_sysfs_link_is_missing(monkeypatch):
+    def raise_oserror(path):
+        raise OSError("No such file or directory")
+
+    monkeypatch.setattr(imod.os, "readlink", raise_oserror)
+    assert InterfaceManager._phy_name_for_interface("wlan9") is None
+
+
+def test_phy_name_is_none_when_link_target_is_unexpected(monkeypatch):
+    monkeypatch.setattr(imod.os, "readlink", lambda path: "../../devices/pci0000:00/other")
+    assert InterfaceManager._phy_name_for_interface("eth0") is None
+
+
+def test_phy_block_prefers_the_wiphy_header_match():
+    block = InterfaceManager._phy_block_for(IW_LIST_WIPHY_FORMAT, "wlan1mon", "phy1")
+
+    assert "Wiphy phy1" in block and "Wiphy phy0" not in block
+
+
+def test_phy_block_matches_legacy_header_by_index():
+    block = InterfaceManager._phy_block_for(IW_LIST_TWO_PHYS, "wlan1mon", "phy1")
+
+    assert "phy#1" in block and "phy#0" not in block
+
+
+def test_phy_block_does_not_match_a_longer_phy_number():
+    output = (
+        "Wiphy phy1\n\tFrequencies:\n\t\t* 2412 MHz [1] (20.0 dBm)\n"
+        "Wiphy phy10\n\tFrequencies:\n\t\t* 5180 MHz [36] (20.0 dBm)\n"
+    )
+
+    block = InterfaceManager._phy_block_for(output, "wlan1", "phy1")
+
+    assert "phy10" not in block
+    assert "* 2412 MHz [1]" in block
+
+
+def test_phy_block_falls_back_when_phy_and_interface_both_absent():
+    result = InterfaceManager._phy_block_for(IW_LIST_NO_INTERFACE_LINES, "wlan9", "phy9")
+
+    assert result == IW_LIST_NO_INTERFACE_LINES
+
+
+def test_supported_channels_scopes_by_sysfs_phy_when_iw_omits_interfaces(monkeypatch):
+    """The CI failure: no Interface lines, so scoping must come from sysfs."""
+    monkeypatch.setattr(
+        imod.os,
+        "readlink",
+        lambda path: "../../devices/platform/mac80211_hwsim.1/ieee80211/phy1",
+    )
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_NO_INTERFACE_LINES)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert im.get_supported_channels("wlan1mon") == [36, 149]
+
+
+def test_supported_channels_falls_back_to_all_phys_when_phy_unresolvable(monkeypatch):
+    """No sysfs link and no Interface lines: return everything rather than nothing."""
+    def raise_oserror(path):
+        raise OSError("No such file or directory")
+
+    monkeypatch.setattr(imod.os, "readlink", raise_oserror)
+    stub_commands(monkeypatch, imod, {("iw", "list"): (0, IW_LIST_NO_INTERFACE_LINES)})
+    im = InterfaceManager(ToolManager(CapabilityRegistry()))
+
+    assert im.get_supported_channels("wlan1mon") == [1, 6, 36, 149]

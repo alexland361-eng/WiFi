@@ -288,7 +288,8 @@ class InterfaceManager:
             if exit_code != 0:
                 return []
 
-            block = self._phy_block_for(stdout, interface)
+            phy = self._phy_name_for_interface(interface)
+            block = self._phy_block_for(stdout, interface, phy)
             for line in block.splitlines():
                 # Example: * 2412 MHz [1] (20.0 dBm)
                 #          * 5745 MHz [149] (disabled)
@@ -308,19 +309,45 @@ class InterfaceManager:
 
         return sorted(channels)
 
+    @staticmethod
+    def _phy_name_for_interface(interface: str) -> Optional[str]:
+        """Resolve an interface to its phy (e.g. "wlan1mon" -> "phy1") via sysfs.
+
+        Current `iw list` output does not enumerate interfaces, so the phy cannot
+        be found by scanning it. The phy80211 symlink is authoritative and works
+        for virtual interfaces created by airmon-ng too.
+        """
+        link = f"/sys/class/net/{interface}/phy80211"
+        try:
+            target = os.readlink(link)
+        except OSError:
+            return None
+        name = os.path.basename(os.path.normpath(target))
+        return name if re.fullmatch(r"phy\d+", name) else None
+
     # `iw list` opens each radio's block with "Wiphy phy0" in current iw
     # releases and with "phy#0" in older ones. Split on either.
     _PHY_HEADER = re.compile(r"(?m)^(?=Wiphy\s+phy|phy#)")
 
     @classmethod
-    def _phy_block_for(cls, iw_list_output: str, interface: str) -> str:
-        """Return the `iw list` block for the phy owning `interface`.
+    def _phy_block_for(cls, iw_list_output: str, interface: str, phy_name: Optional[str] = None) -> str:
+        """Return the `iw list` block describing this interface's radio.
 
-        Falls back to the whole output when the interface cannot be located, so
-        a partial answer is still returned rather than nothing.
+        Prefers the phy resolved from sysfs. Falls back to locating an
+        "Interface <name>" line for older iw releases, then to the whole output,
+        so a partial answer is still returned rather than nothing.
         """
         blocks = re.split(cls._PHY_HEADER, iw_list_output)
+
+        if phy_name:
+            index = phy_name[3:]  # "phy1" -> "1"
+            for block in blocks:
+                header = block.split("\n", 1)[0].strip()
+                if header in (f"Wiphy {phy_name}", f"phy#{index}"):
+                    return block
+
         for block in blocks:
             if re.search(rf"(?m)^\s*Interface\s+{re.escape(interface)}\s*$", block):
                 return block
+
         return iw_list_output

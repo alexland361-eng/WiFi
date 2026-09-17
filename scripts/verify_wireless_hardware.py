@@ -308,16 +308,36 @@ def check_channel(im, iface: str, report: Report) -> None:
         # Distinguish "the parser missed them" from "iw list produced nothing".
         rc, out, err = sh(["iw", "list"])
         lines = (out or err).splitlines()
-        head = " | ".join(lines[:4])
-        mhz = " | ".join(l.strip() for l in lines if "MHz" in l)[:12]
-        freq_hdr = [l.strip() for l in lines if "Frequenc" in l][:3]
-        iface_hdr = [l.strip() for l in lines if "Interface" in l][:4]
+
+        # Verbatim frequency lines: the first entries after a "Frequencies:"
+        # header. Truncating the joined string (as an earlier version did) hides
+        # the exact format the parser has to match.
+        freq_lines: List[str] = []
+        after_header = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("Frequencies:"):
+                after_header = True
+                continue
+            if after_header:
+                if stripped.startswith("*"):
+                    freq_lines.append(stripped)
+                    if len(freq_lines) >= 6:
+                        break
+                elif stripped and freq_lines:
+                    break
+
+        phy_link = f"/sys/class/net/{iface}/phy80211"
+        try:
+            resolved = os.path.basename(os.path.normpath(os.readlink(phy_link)))
+        except OSError as exc:
+            resolved = f"<unreadable: {exc}>"
+
         annotate(
             "error",
             "iw-list-diagnostic",
             f"get_supported_channels({iface}) returned []; iw list rc={rc}; "
-            f"head=[{head[:200]}]; frequency_headers={freq_hdr}; "
-            f"interface_lines={iface_hdr}; first_MHz_lines=[{mhz[:400]}]",
+            f"{phy_link}->{resolved}; freq_lines={freq_lines}",
         )
 
     # Channels 1, 6 and 11 are always valid 2.4 GHz; hwsim supports them.
