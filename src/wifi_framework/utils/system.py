@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from typing import Dict, Optional, Tuple
 
+from .validation import validate_interface
+
 
 def get_os_info() -> Dict[str, str]:
     """Get OS information."""
@@ -66,9 +68,22 @@ def check_tool_available(tool_binary: str) -> Tuple[bool, Optional[str], Optiona
 
 
 def check_interface_exists(interface: str) -> bool:
-    """Check if network interface exists."""
+    """
+    Check whether a network interface exists.
+
+    The name is validated *before* it is interpolated into ``/sys/class/net/{interface}``. Without
+    that, ``""``, ``"."`` and ``".."`` all reported a present interface, because the directory
+    itself and its parent satisfy ``os.path.exists``. Fourteen call sites gate on this answer -
+    including ``InterfaceManager.change_mac``, ``ExecutionAdapter`` preparation and the capability
+    checker - so a false positive means an operation proceeds against a path that is not an
+    interface, and the caller's "interface does not exist" branch never runs.
+
+    Validating also removes any traversal possibility: a name matching
+    ``[a-zA-Z0-9._-]+`` with no empty dot-segment cannot escape ``/sys/class/net``.
+    """
+    if not validate_interface(interface)[0]:
+        return False
     try:
-        # Check /sys/class/net
         return os.path.exists(f"/sys/class/net/{interface}")
     except Exception:
         return False

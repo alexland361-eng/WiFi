@@ -329,6 +329,16 @@ for the milestone plan this release completes.
   `/sys/class/net/{interface}`, where `/sys/class/net/..` **exists** - so a traversal value was
   reported as a present interface. A name whose dot-separated segments include an empty one is now
   refused, which rejects `.` and `..` while leaving `eth0.100` and `wlan0mon` valid.
+- **`check_interface_exists` reported nonexistent interfaces as present** (`utils/system.py`). It
+  interpolated its argument straight into `os.path.exists(f"/sys/class/net/{interface}")`, so `""`,
+  `"."` and `".."` all returned `True` - the directory itself and its parent exist. Fourteen call
+  sites gate on this answer (`InterfaceManager.change_mac`, monitor-mode setup, `ExecutionAdapter`
+  preparation, the capability and tool managers), so a false positive let an operation proceed
+  against a path that is not an interface and the caller's "interface does not exist" branch never
+  ran. The name is now validated before it reaches the filesystem, which also removes any traversal
+  possibility at that call site. Verified post-fix: `""`, `"."`, `".."`, `"..."`, `"wlan0\n"`,
+  `None` and `b"eth0"` all return `False`, every interface from `get_interface_list()` still returns
+  `True`, and `--discover-only` still finds `eth0`.
 - **`WorldStateView` crashed on any observation** (`core/decision/state_view.py` read
   `observation.tags`, a field `ObservationRef` does not have). Every assessment that had observed
   anything failed at planning; tags are now rebuilt from the contract's `in_scope`/`stale`
@@ -398,10 +408,10 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 373 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 377 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
-- New suites: `test_validation.py` (109), `test_contracts.py` (49), `test_world_state.py` (34),
+- New suites: `test_validation.py` (113), `test_contracts.py` (49), `test_world_state.py` (34),
   `test_policy.py` (30), `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
   `test_contract_pipeline.py` (25), `test_decision_engine.py` (22), `test_audit.py` (18)
 - `test_validation.py` covers the input validators and the security fixes above. Three of its tests
@@ -410,7 +420,7 @@ for the milestone plan this release completes.
   check and then drift), no `sanitize_command_arg` exists to be mistaken for a control, and no
   module in the package passes `shell=True` to any call, verified by walking the AST of all 119
   modules so the phrase appearing in a comment or string cannot produce a false pass or a false
-  alarm. `utils/validation.py` goes from 37% to 99% statement coverage
+  alarm. `utils/validation.py` goes from 37% to 100% statement coverage
 - `test_audit.py` proves the M6 acceptance criterion directly: the correlation chain reaches
   `finding_ids` and `verification_ids` for every finding, findings from other executions are not
   falsely linked, and an unattributed execution stays honestly unattributed

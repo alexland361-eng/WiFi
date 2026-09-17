@@ -282,7 +282,7 @@ other through direct method calls. The specification's core architecture require
 communicating **only** through explicit, versioned data contracts, with the rule that "no engine
 may know how another engine works internally". This session implemented that layer: ten contracts,
 six subsystem boundaries, an orchestrating loop rewired through them, and a test suite that grew
-from 24 to 373 tests.
+from 24 to 377 tests.
 
 Plan: `docs/CONTRACT_LAYER_PLAN.md` (milestones M1-M8, all complete).
 Reference: `docs/DATA_CONTRACTS.md`.
@@ -447,6 +447,21 @@ the question is not "what is malformed" but **"what may I safely discard without
 meaning"**. Whitespace and separators qualify; arbitrary characters do not, because discarding them
 manufactures a different identifier. That principle also settled the next question.
 
+A follow-up worth recording, because fixing the validator turned out not to be enough. Finding 3
+above was not really about `validate_interface` - it was about `check_interface_exists`, which
+interpolated its argument straight into `os.path.exists(f"/sys/class/net/{interface}")` and so
+answered `True` for `""`, `"."` and `".."`. That function never called the validator, and fourteen
+call sites gate on it, including `InterfaceManager.change_mac` and monitor-mode setup. Hardening the
+validator would have protected the policy path and left the filesystem path exactly as broken as it
+was.
+
+So the general rule from this session: **harden the function that performs the dangerous operation,
+not only the function that checks inputs.** A validator is only a control where it is actually
+called; the gate that interpolates a name into a path, or builds an argv, has to defend itself
+because nothing guarantees a caller validated first. `check_interface_exists` now validates before
+touching the filesystem, which also removes the traversal possibility at that site rather than
+upstream of it.
+
 #### 11. Deleting a no-op was better than implementing it
 
 `utils/validation.py` also contained `sanitize_command_arg`: it looped over shell metacharacters,
@@ -517,7 +532,7 @@ control.
 
 - [x] M1-M8 of `docs/CONTRACT_LAYER_PLAN.md` complete
 - [x] Ten contracts, all at version 1.0, each with a producer, a consumer and tests
-- [x] 373 tests pass in ~4s with no wireless hardware and no Kali tools installed
+- [x] 377 tests pass in ~4s with no wireless hardware and no Kali tools installed
 - [x] The 24 pre-existing tests pass **unmodified** (regression gate for M5)
 - [x] End-to-end loop proven against a real subprocess, including failure, timeout, missing tool,
       scope refusal and unsafe-parameter refusal
@@ -526,17 +541,18 @@ control.
 - [x] CLI unchanged in interface: `--discover-only`, `--ssid`, `--max-iterations`, `--output` all
       behave as before, with honest `unsupported` reporting where tools are absent
 - [x] No new runtime dependency (`pyyaml` only); no `shell=True` anywhere
-- [x] Eleven real defects found and fixed by the new tests:
+- [x] Twelve real defects found and fixed by the new tests:
       planning-view crash, scope hole, failure misattribution, contract shape divergence, silent
       tool substitution at the AI seam, **malformed scope BSSID authorising a different network**,
       duplicated-and-drifted MAC normalisation in the authorisation path, `validate_mac` and
       `normalize_mac` disagreeing, trailing newline accepted in an interface name (`$` vs `\Z`),
-      `.`/`..` accepted as interface names, and a no-op `sanitize_command_arg` that four documents
-      cited as a security control
+      `.`/`..` accepted as interface names, `check_interface_exists` reporting `""`/`"."`/`".."` as
+      present interfaces, and a no-op `sanitize_command_arg` that four documents cited as a security
+      control
 - [x] Every acceptance criterion in `docs/CONTRACT_LAYER_PLAN.md` section 7 is backed by a named
       test, not by inspection
 - [x] `utils/validation.py` - the module that decides what a valid BSSID, interface and address is -
-      went from 37% to 99% statement coverage
+      went from 37% to 100% statement coverage
 
 ### Next Steps
 

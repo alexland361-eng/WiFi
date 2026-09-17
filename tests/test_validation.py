@@ -473,6 +473,61 @@ def test_a_newline_inside_an_address_is_not_stripped():
     assert normalize_mac("AA:BB:CC:DD:EE:FF\nrm -rf /") is None
 
 
+# ------------------------------------------------------- the interface-existence gate
+
+
+def test_nonexistent_and_malformed_interface_names_do_not_exist():
+    """
+    ``check_interface_exists`` interpolates its argument into ``/sys/class/net/{interface}``.
+
+    Before the fix, ``""``, ``"."`` and ``".."`` all returned ``True`` - the directory itself and
+    its parent satisfy ``os.path.exists`` - so fourteen call sites that gate on this answer would
+    proceed as though a nonexistent interface were present, and the caller's "interface does not
+    exist" branch never ran.
+    """
+    from wifi_framework.utils.system import check_interface_exists
+
+    for name in ["", ".", "..", "...", "wlan0\n", " wlan0 ", "../../etc/passwd", "eth0/../../etc",
+                 "definitely-not-an-interface-xyz", "/etc/passwd"]:
+        assert check_interface_exists(name) is False, repr(name)
+
+
+def test_check_interface_exists_rejects_non_string_input():
+    from wifi_framework.utils.system import check_interface_exists
+
+    for value in [None, 0, [], {}, b"eth0"]:
+        assert check_interface_exists(value) is False, repr(value)
+
+
+def test_a_real_interface_is_still_reported_as_present():
+    """The fix must not turn the gate into a constant ``False``."""
+    from wifi_framework.utils.system import check_interface_exists, get_interface_list
+
+    present = get_interface_list()
+    assert present, "expected at least one network interface on this machine"
+    for name in present:
+        assert check_interface_exists(name) is True, name
+
+
+def test_the_traversal_target_exists_but_is_not_reported_as_an_interface():
+    """
+    Pins the exact defect rather than just the outcome: the path really does exist, so the only
+    thing preventing a false positive is the validation, not the filesystem.
+    """
+    import os
+    import sys
+
+    from wifi_framework.utils.system import check_interface_exists
+
+    if sys.platform != "linux" or not os.path.isdir("/sys/class/net"):
+        pytest.skip("requires Linux /sys/class/net")
+
+    assert os.path.exists("/sys/class/net/..") is True
+    assert os.path.exists("/sys/class/net/") is True
+    assert check_interface_exists("..") is False
+    assert check_interface_exists("") is False
+
+
 def test_run_command_takes_an_argv_list_not_a_string():
     """The single execution entry point accepts a list; a shell string would be a type error."""
     import inspect
