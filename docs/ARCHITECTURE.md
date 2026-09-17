@@ -544,15 +544,29 @@ class AssessmentEngine:
   (`CONTROL_CHARS`, `SHELL_METACHARACTERS`) and `ActionPolicy` imports them, turning a match into a
   non-retriable rejection. Argument values are never mutated - a rewritten BSSID or SSID would
   redirect the assessment at a target the operator did not authorise
+- **No autonomous hardware mutation.** The loop never creates a monitor interface, changes a MAC,
+  brings an interface up or down, retunes a channel or unblocks rfkill. `InterfaceManager`
+  implements all of these and is exported for an operator to call explicitly, but nothing on the
+  autonomous path invokes it - the engine and the CLI each construct one and never call a method
+  (verified by an AST sweep over all 119 modules, pinned by
+  `tests/test_validation.py::test_the_autonomous_loop_never_mutates_radio_hardware`). These actions
+  are disruptive and not reliably reversible mid-assessment, so they belong to a human who has
+  decided to make them, not to a loop choosing its next action.
+
+  The loop's alternative is to **detect and defer**: a capability needing monitor mode on an
+  interface that lacks it yields a *retriable* `monitor_mode_unavailable` deferral, suppressed for
+  `BLOCK_COOLDOWN_ITERATIONS` (3) iterations and then eligible again, so an operator who enables
+  monitor mode during a run can be picked up by a later iteration. The operator must establish
+  monitor mode before active assessment - see README "Interface preparation".
 
 ## Testing
 
-378 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
+380 tests (`pytest` from a clean checkout; `pythonpath = ["src"]` is configured in
 `pyproject.toml`, so no install step is needed):
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `test_validation.py` | 114 | Input validators, the single-sourced forbidden-character rule, the interface-existence gate, no-shell AST sweep, and that a malformed scope BSSID authorises nothing |
+| `test_validation.py` | 116 | Input validators, the single-sourced forbidden-character rule, the interface-existence gate, no-shell and no-autonomous-hardware-mutation AST sweeps, and that a malformed scope BSSID authorises nothing |
 | `test_contracts.py` | 49 | Envelope, both wire forms, version negotiation, digests, every semantic rule |
 | `test_world_state.py` | 34 | Publication, staleness, stable gap ids, hypotheses/findings split, applier |
 | `test_policy.py` | 30 | Scope / capability / parameter stages, fail-closed invasiveness, refusals |

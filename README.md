@@ -154,6 +154,7 @@ Audit & Experience
 - Linux (Kali Linux recommended)
 - Root privileges for wireless operations
 - Wireless adapter with monitor mode support (for active assessment)
+- **A monitor-mode interface you have created yourself** - see [Interface preparation](#interface-preparation)
 
 ### Install from source
 
@@ -186,6 +187,70 @@ wifi-assess --list-capabilities
 # List system interfaces
 wifi-assess --list-interfaces
 ```
+
+### Interface preparation
+
+**The framework does not reconfigure your radio.** Active wireless assessment needs an interface in
+monitor mode, and establishing that is the operator's job, done deliberately and before the run:
+
+```bash
+# Typical preparation (Kali), as root
+airmon-ng check kill          # stop processes that interfere with monitor mode
+airmon-ng start wlan0         # creates wlan0mon
+iw dev                        # confirm the monitor interface exists
+
+# then point the assessment at it
+wifi-assess --interface wlan0mon --ssid MyNetwork
+```
+
+This is a deliberate boundary, not a missing feature. Creating a monitor VIF, changing a MAC
+address, bringing an interface down, retuning a channel or unblocking rfkill are disruptive and not
+reliably reversible mid-assessment, so they belong to a human who has decided to make them - not to
+a loop choosing its next action. `InterfaceManager`
+(`src/wifi_framework/core/execution/interface_manager.py`) implements all of them and is exported
+for you to call explicitly, but nothing in the autonomous path invokes it.
+`tests/test_validation.py::test_the_autonomous_loop_never_mutates_radio_hardware` enforces that by
+sweeping the AST of every module under `core/`.
+
+What the loop does instead is **detect and defer**. When a capability requires monitor mode and the
+interface does not provide it, the policy layer returns `monitor_mode_unavailable` as a *retriable*
+deferral rather than a permanent refusal. A deferred action is recorded exactly like any other action
+that never ran - it is never silently dropped:
+
+```jsonc
+// report -> execution_history[]
+{
+  "capability_name": "airodump-ng",
+  "status": "unsupported",          // "rejected" for a permanent refusal
+  "success": false,
+  "exit_code": null,
+  "raw_command": "",                // empty: no tool was ever invoked
+  "failure_reason": "interface 'wlan0' does not support monitor mode",
+  "action_id": "6f1c2a90-...-e41b"
+}
+```
+
+```jsonc
+// audit trail -> "contract:execution-result" (full payload recorded)
+"failure": {
+  "code": "capability_unavailable",
+  "message": "interface 'wlan0' does not support monitor mode",
+  "retriable": true,                // monitor mode can be established, so this is "not yet"
+  "details": { "stage": "capability", "issues": [ /* the policy issues verbatim */ ] }
+}
+```
+
+The trail also carries an `action_rejected` event naming the `action_id`, stage and reason, so a
+deferral is traceable to the decision that caused it.
+
+Because the deferral is retriable, the capability is suppressed for `BLOCK_COOLDOWN_ITERATIONS` (3)
+iterations and then becomes eligible again - so if you enable monitor mode while an assessment is
+running, a later iteration can pick it up. The suppression map itself (`blocked_capabilities`) is
+internal loop state rather than a report field: it is published to the Decision Engine inside
+`world-state.planner_hints`, and because `world-state` is a compact-payload schema the trail records
+its summary and digest rather than the full map. Until monitor mode exists the assessment keeps
+deferring those actions and does not fabricate results to fill the gap. Run `--discover-only` first
+to see exactly which capabilities are available on the interface you prepared.
 
 ### Authorized Assessment
 
@@ -430,7 +495,7 @@ config/
 ├── default.yaml
 └── capabilities/
 
-tests/                 # 378 tests
+tests/                 # 380 tests
 docs/
 ```
 
@@ -446,7 +511,7 @@ pytest --cov=wifi_framework
 checkout with no install step:
 
 ```bash
-python -m pytest          # 378 tests, ~4s
+python -m pytest          # 380 tests, ~4s
 ```
 
 The suite requires **no wireless hardware and no Kali tools**: capability availability is supplied

@@ -568,6 +568,66 @@ def test_validating_the_gate_does_not_break_monitor_interface_name_construction(
     }
 
 
+#: ``InterfaceManager`` operations that change radio or hardware state. Each is disruptive and not
+#: reliably reversible mid-assessment: a changed MAC, a downed interface, a monitor VIF, an rfkill
+#: unblock.
+HARDWARE_MUTATING_METHODS = {
+    "change_mac",
+    "create_monitor_interface",
+    "remove_monitor_interface",
+    "set_interface_down",
+    "set_interface_up",
+    "set_channel",
+    "unblock_rfkill",
+}
+
+
+def test_the_autonomous_loop_never_mutates_radio_hardware():
+    """
+    The assessment loop must not change hardware state on its own initiative.
+
+    ``InterfaceManager`` implements monitor-mode creation, MAC changes, interface up/down, channel
+    setting and rfkill unblocking. It is exported for an **operator** to call explicitly, and the
+    engine constructs one - but nothing in the autonomous path invokes it. That is deliberate: these
+    actions are disruptive and not reliably reversible, so they belong to the operator, not to a
+    loop deciding what to do next.
+
+    What the loop does instead is *detect and defer*: when a capability needs monitor mode and the
+    interface does not support it, the policy layer returns ``monitor_mode_unavailable`` as a
+    retriable deferral (see ``test_policy.py::test_monitor_mode_gap_is_deferred_but_retriable``), so
+    the assessment waits for the operator to establish monitor mode rather than establishing it
+    itself.
+
+    Swept by AST over every module under ``core/`` except ``interface_manager.py`` itself, so a
+    future refactor that wires one of these into the loop fails here and forces the decision to be
+    made consciously. Matched on method name, which is why the names are specific.
+    """
+    core_root = PACKAGE_ROOT / "core"
+    offenders = []
+    for path in sorted(core_root.rglob("*.py")):
+        if path.name == "interface_manager.py":
+            continue  # the implementation calls its own helpers
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in HARDWARE_MUTATING_METHODS:
+                offenders.append(f"{path.relative_to(PACKAGE_ROOT)}:{node.lineno} .{node.attr}")
+    assert offenders == [], f"autonomous loop mutates hardware: {offenders}"
+
+
+def test_interface_manager_remains_available_for_explicit_operator_use():
+    """
+    The counterpart guard: deferring is only safe because the operator has a supported way to act.
+
+    If ``InterfaceManager`` were removed or unexported, the loop's "wait for the operator" behaviour
+    would leave monitor mode unreachable through the framework entirely.
+    """
+    from wifi_framework.core.execution import InterfaceManager, __all__ as execution_all
+
+    assert "InterfaceManager" in execution_all
+    for method in HARDWARE_MUTATING_METHODS:
+        assert callable(getattr(InterfaceManager, method)), method
+
+
 def test_run_command_takes_an_argv_list_not_a_string():
     """The single execution entry point accepts a list; a shell string would be a type error."""
     import inspect

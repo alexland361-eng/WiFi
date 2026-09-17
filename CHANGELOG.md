@@ -187,6 +187,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test `test_registry_loading` now expects >=50 capabilities and checks 46 expected including all new
 - Core execution __init__ now exports ToolManager, InterfaceManager, DependencyResolver
 - Engine now uses ToolManager, InterfaceManager, DependencyResolver for advanced handling
+  *(correction, 0.4.0: true for `ToolManager` and `DependencyResolver`, which the engine calls
+  throughout discovery, capability status and tool-chain feasibility. **Not** true for
+  `InterfaceManager`: the engine constructs one at `assessment_engine.py:107` and the CLI another at
+  `main.py:204`, but no method of it is called anywhere in the package - verified by an AST sweep
+  over all 119 modules. Its hardware-mutating operations (monitor-mode creation, MAC change,
+  interface up/down, channel set, rfkill unblock) are therefore **operator-invoked only**, which is
+  the intended design: the loop detects a missing capability and defers, it does not reconfigure the
+  radio on its own initiative. See the 0.4.0 Known limitations and `docs/ARCHITECTURE.md`.
+  `tests/test_validation.py::test_the_autonomous_loop_never_mutates_radio_hardware` now pins that
+  boundary.)*
 
 ### Security
 - Maintained security-first: no shell=True, validation for new adapters (BSSID, ESSID, domain, target), scope enforcement for invasive (aireplay-ng deauth, airbase-ng AP simulation, packetforge-ng, nuclei, nikto, metasploit run, impacket, responder), safety for metasploit (check default) and openvas (allow_scan)
@@ -408,10 +418,10 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 378 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 380 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
-- New suites: `test_validation.py` (114), `test_contracts.py` (49), `test_world_state.py` (34),
+- New suites: `test_validation.py` (116), `test_contracts.py` (49), `test_world_state.py` (34),
   `test_policy.py` (30), `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
   `test_contract_pipeline.py` (25), `test_decision_engine.py` (22), `test_audit.py` (18)
 - `test_validation.py` covers the input validators and the security fixes above. Three of its tests
@@ -447,6 +457,23 @@ for the milestone plan this release completes.
 - With no network scope declared, `is_ip_authorized` permits passive discovery of any host. This
   is pre-0.4.0 `AssessmentScope` semantics, deliberately left unchanged here; tightening it is a
   behavioural decision for the maintainer
+- **The framework never reconfigures the radio.** `InterfaceManager` implements monitor-mode
+  creation, MAC changes, interface up/down, channel setting and rfkill unblocking, and is exported
+  for operator use - but no code path in the package calls it (verified by an AST sweep over all
+  119 modules). The engine and the CLI each construct one and never invoke a method. Active
+  assessment therefore **requires the operator to establish monitor mode first**
+  (`airmon-ng start wlan0`); see README "Interface preparation".
+
+  This is intended, not an oversight: those operations are disruptive and not reliably reversible
+  mid-assessment, so they belong to a human who has decided to make them. The consequence is worth
+  stating plainly though - on an interface that is not in monitor mode, every monitor-requiring
+  capability defers with `monitor_mode_unavailable`. That deferral is *retriable*, so the capability
+  is suppressed for `BLOCK_COOLDOWN_ITERATIONS` (3) iterations and then becomes eligible again,
+  which means an assessment left running against an unprepared interface will cycle
+  defer → cooldown → defer until it exhausts `--max-iterations`. It will not fabricate results to
+  fill the gap, and each deferral is recorded in `execution_history` and the audit trail, but it
+  also will not fix the interface itself. `tests/test_validation.py::test_the_autonomous_loop_never_mutates_radio_hardware`
+  pins the boundary so wiring it up later is a conscious decision.
 
 ## [Unreleased]
 
