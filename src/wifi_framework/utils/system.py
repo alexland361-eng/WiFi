@@ -197,6 +197,58 @@ def run_command(
         return 1, "", f"Execution failed: {e}", duration
 
 
+#: Artifacts can hold captured traffic and enumeration output; audit logs hold the
+#: commands run, the targets touched and the findings reached. Both describe an
+#: assessment that may be under authorization constraints, so neither is created
+#: readable by other local users. The umask default (0644 files, 0755 dirs) would
+#: leave them world-readable.
+OWNER_ONLY_DIR_MODE = 0o700
+OWNER_ONLY_FILE_MODE = 0o600
+
+
+def ensure_private_dir(path: str, mode: int = OWNER_ONLY_DIR_MODE) -> None:
+    """Create a directory only the current user can read, write or traverse.
+
+    The default audit location sits under ``/tmp``, which is world-writable and
+    predictable. ``os.makedirs(exist_ok=True)`` would happily reuse a directory
+    another local user created there first, so an existing directory that is not
+    owned by us is treated as hostile rather than written into. An existing
+    directory that *is* ours but group- or other-accessible is tightened.
+
+    Raises:
+        RuntimeError: the path exists and is owned by a different uid.
+    """
+    if os.path.isdir(path):
+        info = os.stat(path)
+        if info.st_uid != os.getuid():
+            raise RuntimeError(
+                f"refusing to use {path!r}: owned by uid {info.st_uid}, not the "
+                f"current uid {os.getuid()}; a predictable path under /tmp must not "
+                "be reused from another account"
+            )
+        if info.st_mode & 0o077:
+            os.chmod(path, mode)
+        return
+
+    existed_before = os.path.exists(path)
+    os.makedirs(path, mode=mode, exist_ok=True)
+    if not existed_before:
+        # makedirs applies `mode` inconsistently across intermediate directories and
+        # is masked by the umask, so state the leaf mode explicitly.
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
+
+
+def tighten_file_mode(path: str, mode: int = OWNER_ONLY_FILE_MODE) -> None:
+    """Restrict a file this process just wrote. Best effort; never raises."""
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def parse_version(version_str: str) -> Optional[Tuple[int, ...]]:
     """Parse version string into tuple of ints for comparison."""
     import re

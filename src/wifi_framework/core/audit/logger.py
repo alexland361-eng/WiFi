@@ -21,6 +21,9 @@ from ..models.evidence import Evidence
 from ..models.finding import Finding
 
 
+from ...utils.system import ensure_private_dir, tighten_file_mode
+
+
 class AuditLogger:
     """Logs all assessment activities for auditability."""
 
@@ -29,8 +32,14 @@ class AuditLogger:
         self.assessment_id = assessment_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         self.events: List[Dict[str, Any]] = []
 
-        # Ensure log dir exists
-        os.makedirs(self.log_dir, exist_ok=True)
+        #: Audit writes that failed. An assessment whose trail silently stopped
+        #: being recorded is not auditable, so failures are counted and surfaced
+        #: rather than swallowed.
+        self.write_failures: List[str] = []
+
+        # Ensure the log directory exists and is readable only by this user. The
+        # default sits under /tmp, which is world-writable and predictable.
+        ensure_private_dir(self.log_dir)
 
     def log_event(self, event_type: str, data: Dict[str, Any], timestamp: datetime = None):
         """Log an event."""
@@ -48,8 +57,11 @@ class AuditLogger:
             log_file = os.path.join(self.log_dir, f"{self.assessment_id}.jsonl")
             with open(log_file, "a") as f:
                 f.write(json.dumps(event) + "\n")
-        except OSError:
-            pass
+            tighten_file_mode(log_file)
+        except OSError as exc:
+            # Not silent: an audit trail that stops being written must be visible,
+            # otherwise the assessment looks auditable and is not.
+            self.write_failures.append(f"{type(exc).__name__}: {exc}")
 
     def log_scope(self, scope):
         self.log_event("scope_defined", {"scope": scope.to_dict()})

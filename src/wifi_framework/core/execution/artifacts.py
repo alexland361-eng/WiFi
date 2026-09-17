@@ -77,6 +77,9 @@ class ArtifactStoreStats:
         }
 
 
+from ...utils.system import OWNER_ONLY_FILE_MODE, ensure_private_dir, tighten_file_mode
+
+
 class ArtifactStore:
     """Stores and indexes the bytes produced or consumed by executions."""
 
@@ -101,7 +104,7 @@ class ArtifactStore:
 
     def _ensure_dir(self) -> None:
         if not self._created_dirs:
-            os.makedirs(self.base_dir, exist_ok=True)
+            ensure_private_dir(self.base_dir)
             self._created_dirs = True
 
     def _path_for(self, artifact_id: str, kind: str) -> str:
@@ -146,8 +149,12 @@ class ArtifactStore:
         truncated = len(data) > self.max_bytes
         stored = data[: self.max_bytes] if truncated else data
         path = self._path_for(artifact_id, kind)
-        with open(path, "wb") as handle:
+        # Created with the owner-only mode rather than chmod'd afterwards, so the
+        # bytes are never briefly world-readable.
+        handle_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, OWNER_ONLY_FILE_MODE)
+        with os.fdopen(handle_fd, "wb") as handle:
             handle.write(stored)
+        tighten_file_mode(path)
 
         artifact = ArtifactRef(
             id=artifact_id,
