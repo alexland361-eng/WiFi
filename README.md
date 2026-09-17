@@ -430,7 +430,7 @@ config/
 ├── default.yaml
 └── capabilities/
 
-tests/                 # 377 tests
+tests/                 # 378 tests
 docs/
 ```
 
@@ -446,7 +446,7 @@ pytest --cov=wifi_framework
 checkout with no install step:
 
 ```bash
-python -m pytest          # 377 tests, ~4s
+python -m pytest          # 378 tests, ~4s
 ```
 
 The suite requires **no wireless hardware and no Kali tools**: capability availability is supplied

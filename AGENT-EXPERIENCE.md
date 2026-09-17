@@ -282,7 +282,7 @@ other through direct method calls. The specification's core architecture require
 communicating **only** through explicit, versioned data contracts, with the rule that "no engine
 may know how another engine works internally". This session implemented that layer: ten contracts,
 six subsystem boundaries, an orchestrating loop rewired through them, and a test suite that grew
-from 24 to 377 tests.
+from 24 to 378 tests.
 
 Plan: `docs/CONTRACT_LAYER_PLAN.md` (milestones M1-M8, all complete).
 Reference: `docs/DATA_CONTRACTS.md`.
@@ -532,7 +532,7 @@ control.
 
 - [x] M1-M8 of `docs/CONTRACT_LAYER_PLAN.md` complete
 - [x] Ten contracts, all at version 1.0, each with a producer, a consumer and tests
-- [x] 377 tests pass in ~4s with no wireless hardware and no Kali tools installed
+- [x] 378 tests pass in ~4s with no wireless hardware and no Kali tools installed
 - [x] The 24 pre-existing tests pass **unmodified** (regression gate for M5)
 - [x] End-to-end loop proven against a real subprocess, including failure, timeout, missing tool,
       scope refusal and unsafe-parameter refusal

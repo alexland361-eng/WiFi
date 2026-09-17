@@ -528,6 +528,46 @@ def test_the_traversal_target_exists_but_is_not_reported_as_an_interface():
     assert check_interface_exists("") is False
 
 
+def test_validating_the_gate_does_not_break_monitor_interface_name_construction():
+    """
+    Regression guard for the fix itself.
+
+    ``InterfaceManager`` derives monitor-interface candidates by concatenation - ``interface + "mon"``
+    and ``interface + "mon0"`` - and gates each on ``check_interface_exists``. Adding validation to
+    that gate must not change the answer for any name those call sites can legitimately produce, or
+    monitor-mode detection would silently stop finding interfaces.
+
+    Compared differentially against the pre-fix behaviour (a bare ``os.path.exists`` interpolation)
+    across every derivable name plus malformed inputs: the only differences are ``""``, ``"."`` and
+    ``".."``, which is the intended fix.
+    """
+    import os
+
+    from wifi_framework.utils.system import check_interface_exists, get_interface_list
+
+    def pre_fix(name) -> bool:
+        try:
+            return os.path.exists(f"/sys/class/net/{name}")
+        except Exception:
+            return False
+
+    bases = get_interface_list() + ["wlan0", "wlan1", "wlx00c0ca123456", "eth0"]
+    derivable = {f"{base}{suffix}" for base in bases for suffix in ("", "mon", "mon0")}
+    malformed = {"", ".", "..", "...", "wlan0\n", " wlan0 ", "../../etc/passwd", "eth0/../../etc"}
+
+    changed_legitimate = []
+    for name in sorted(derivable):
+        if pre_fix(name) != check_interface_exists(name):
+            changed_legitimate.append(name)
+    assert changed_legitimate == [], f"fix altered legitimate names: {changed_legitimate}"
+
+    # And the malformed set is exactly what the fix is for.
+    assert all(check_interface_exists(name) is False for name in malformed)
+    assert {name for name in malformed if pre_fix(name) and not check_interface_exists(name)} <= {
+        "", ".", ".."
+    }
+
+
 def test_run_command_takes_an_argv_list_not_a_string():
     """The single execution entry point accepts a list; a shell string would be a type error."""
     import inspect

@@ -408,10 +408,10 @@ for the milestone plan this release completes.
 
 ### Testing
 
-- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 377 tests. The one
+- 24 pre-existing test functions pass **unmodified**; the suite grows from 24 to 378 tests. The one
   pre-existing file touched is `tests/test_scope.py`, extended with 5 additive regression tests for
   the scope fix above (54 insertions, 0 deletions - no existing assertion was changed)
-- New suites: `test_validation.py` (113), `test_contracts.py` (49), `test_world_state.py` (34),
+- New suites: `test_validation.py` (114), `test_contracts.py` (49), `test_world_state.py` (34),
   `test_policy.py` (30), `test_verification_engine.py` (29), `test_evidence_engine.py` (28),
   `test_contract_pipeline.py` (25), `test_decision_engine.py` (22), `test_audit.py` (18)
 - `test_validation.py` covers the input validators and the security fixes above. Three of its tests
