@@ -170,10 +170,44 @@ jobs:
           fi
 
 
-      - name: Upload verification log
+      # Two hwsim radios forward frames to each other, so this exercises the
+      # path InterfaceManager verification does not: raw AF_PACKET sockets,
+      # Scapy sniffing, actual transmission, and the framework's ScapyAdapter.
+      - name: Verify raw capture and frame injection between two radios
+        run: |
+          set +e
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true \
+            "$(which python)" scripts/verify_scapy_capture.py 2>&1 \
+            | tee scapy-capture.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "capture/injection exit code: $code"
+          exit "$code"
+
+      - name: Surface capture and injection results
+        if: always()
+        run: |
+          if [ ! -f scapy-capture.log ]; then echo "no log produced"; exit 0; fi
+          grep -E '^(wireless interfaces:|capture on|unique marker|  independent raw capture)' \
+            scapy-capture.log || true
+          summary=$(grep -E '^RESULT:' scapy-capture.log | head -1 | tr -d '\n' || true)
+          echo "${summary:-no RESULT line found}"
+          if [ -n "$summary" ]; then
+            echo "::notice title=capture-injection-summary::${summary}"
+          fi
+          echo "--- failed checks ---"
+          grep -A1 '\[FAIL\]' scapy-capture.log | sed 's/^[[:space:]]*//' || true
+          fails=$(grep -A1 '\[FAIL\]' scapy-capture.log | sed 's/^[[:space:]]*//' | tr '\n' ' ' | tr -s ' ' || true)
+          if [ -n "$fails" ]; then
+            echo "::error title=capture-failed-checks::$(echo "$fails" | cut -c1-900)"
+          fi
+
+      - name: Upload verification logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wireless-verification-log
-          path: wireless-verification.log
+          name: wireless-verification-logs
+          path: |
+            wireless-verification.log
+            scapy-capture.log
           if-no-files-found: warn
