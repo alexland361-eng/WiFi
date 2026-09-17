@@ -95,3 +95,132 @@ def test_scope_enforcer_strict():
 
     allowed, _ = enforcer2.check_wireless_action_allowed("Other", "AA:BB:CC:DD:EE:FF", invasive=False)
     assert not allowed
+
+
+# --------------------------------------------------- malformed scope entries
+#
+# An authorization entry that fails to parse narrows the scope silently: the operator
+# believes a network is authorized, it is not, and every action against it is refused
+# for a reason that looks like a scope violation rather than a typo. The direction is
+# fail-safe, so this is an auditability defect rather than a security hole - but the
+# trail must say what was dropped.
+
+import json
+import os
+
+import pytest
+
+from wifi_framework.core.audit.logger import AuditLogger
+
+
+def test_an_invalid_network_is_recorded_as_dropped():
+    scope = AssessmentScope(
+        authorized_networks=["10.0.0.0/24", "not-a-network", "192.168.1.0/33"]
+    )
+    assert scope.invalid_networks == ["not-a-network", "192.168.1.0/33"]
+    assert [str(network) for network in scope._network_objects] == ["10.0.0.0/24"]
+
+
+def test_an_invalid_bssid_is_recorded_as_dropped():
+    scope = AssessmentScope(authorized_bssids=["not-a-mac", "aa:bb:cc:dd:ee:ff"])
+    assert scope.invalid_bssids == ["not-a-mac"]
+    assert scope._bssid_set == {"AA:BB:CC:DD:EE:FF"}
+
+
+def test_dropping_an_entry_does_not_change_what_is_authorized():
+    """The drop is fail-safe: the valid entry still authorizes, and an address outside
+    every declared network is still refused."""
+    scope = AssessmentScope(
+        authorized_networks=["10.0.0.0/24", "not-a-network"],
+        authorized_bssids=["AA:BB:CC:DD:EE:FF", "not-a-mac"],
+    )
+    assert scope.is_ip_authorized("10.0.0.5") is True
+    assert scope.is_ip_authorized("11.0.0.5") is False
+    assert ScopeEnforcer(scope).scope.is_wireless_asset_authorized(None, "AA:BB:CC:DD:EE:FF")
+
+
+def test_a_clean_scope_reports_no_dropped_entries():
+    scope = AssessmentScope(
+        authorized_networks=["10.0.0.0/24"],
+        authorized_bssids=["AA:BB:CC:DD:EE:FF"],
+        authorized_channels=[1, 6, 11],
+    )
+    assert scope.invalid_networks == []
+    assert scope.invalid_bssids == []
+    assert scope.validate() == []
+
+
+def test_the_dropped_entries_reach_the_audit_trail(tmp_path):
+    """`to_dict` is what `log_scope` records, so this is where the silence becomes
+    visible - without depending on a caller remembering to call `validate()`."""
+    logger = AuditLogger(log_dir=str(tmp_path / "audit"))
+    logger.log_scope(
+        AssessmentScope(
+            authorized_networks=["10.0.0.0/24", "not-a-network"],
+            authorized_bssids=["AA:BB:CC:DD:EE:FF", "not-a-mac"],
+        )
+    )
+    assert logger.write_failures == []
+
+    trail = os.path.join(logger.log_dir, logger.assessment_id + ".jsonl")
+    recorded = json.loads(open(trail, "r", encoding="utf-8").read().strip())
+    scope_record = recorded["data"]["scope"]
+
+    assert scope_record["invalid_networks"] == ["not-a-network"]
+    assert scope_record["invalid_bssids"] == ["not-a-mac"]
+    # The requested entries are still recorded too; the trail shows both.
+    assert scope_record["authorized_networks"] == ["10.0.0.0/24", "not-a-network"]
+
+
+# --------------------------------------------------------- validate() must not raise
+
+
+@pytest.mark.parametrize(
+    "channels,expected_errors",
+    [
+        ([6], []),
+        ([1, 196], []),
+        (["6"], []),
+        ([0], ["Invalid channel: 0"]),
+        ([197], ["Invalid channel: 197"]),
+        ([999], ["Invalid channel: 999"]),
+        (["abc"], ["Invalid channel: abc"]),
+        ([None], ["Invalid channel: None"]),
+        ([True], ["Invalid channel: True"]),
+        ([6.5], ["Invalid channel: 6.5"]),
+        ([[]], 1),
+    ],
+)
+def test_validate_reports_a_malformed_channel_instead_of_raising(channels, expected_errors):
+    """`validate()` is the function that reports malformed scope, so malformed scope
+    crashing it is the one failure it must not have. `1 <= ch <= 196` raised TypeError
+    on a channel declared as a string - exactly the input it exists to report."""
+    errors = AssessmentScope(authorized_channels=channels).validate()
+    if isinstance(expected_errors, int):
+        assert len(errors) == expected_errors
+    else:
+        assert errors == expected_errors
+
+
+def test_a_fractional_channel_is_refused_rather_than_truncated():
+    """`int(6.5)` is 6, a valid channel, so a naive coercion would round a malformed
+    declaration into an authorized one."""
+    scope = AssessmentScope(authorized_channels=[6.5])
+    assert scope.validate() == ["Invalid channel: 6.5"]
+    assert scope._channel_number(6.5) is None
+    assert scope._channel_number("6") == 6
+    assert scope._channel_number(6) == 6
+
+
+def test_validate_reports_every_problem_class_together():
+    scope = AssessmentScope(
+        authorized_bssids=["AA:BB:CC:DD:EE:FF", "zz:zz"],
+        authorized_networks=["10.0.0.0/24", "10.0.0.0/33"],
+        authorized_channels=[6, 400],
+    )
+    errors = scope.validate()
+    assert errors == [
+        "Invalid BSSID format: zz:zz",
+        "Invalid network CIDR: 10.0.0.0/33",
+        "Invalid channel: 400",
+    ]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 from ...utils.validation import normalize_mac
 
@@ -39,6 +39,16 @@ class AssessmentScope:
     _network_objects: List[ipaddress.IPv4Network | ipaddress.IPv6Network] = field(default_factory=list, init=False, repr=False)
     _bssid_set: Set[str] = field(default_factory=set, init=False, repr=False)
 
+    #: Declared entries that could not be used and were dropped. An authorization entry
+    #: that silently fails to parse narrows the scope without telling anyone: the
+    #: operator believes 192.168.1.0/24 is authorized, it is not, and every action
+    #: against it is refused for a reason that looks like a scope violation rather than
+    #: a typo. The direction is fail-safe, but the silence is not. Reported by
+    #: :meth:`validate` and carried in :meth:`to_dict`, which is what the audit trail
+    #: records when the scope is defined.
+    invalid_bssids: List[str] = field(default_factory=list, init=False, repr=False)
+    invalid_networks: List[str] = field(default_factory=list, init=False, repr=False)
+
     def __post_init__(self):
         # Compile SSID patterns
         self._ssid_patterns = []
@@ -56,19 +66,22 @@ class AssessmentScope:
 
         # Normalize BSSIDs
         self._bssid_set = set()
+        self.invalid_bssids = []
         for bssid in self.authorized_bssids:
             normalized = self._normalize_mac(bssid)
             if normalized:
                 self._bssid_set.add(normalized)
+            else:
+                self.invalid_bssids.append(str(bssid))
 
         # Parse networks
         self._network_objects = []
+        self.invalid_networks = []
         for net in self.authorized_networks:
             try:
                 self._network_objects.append(ipaddress.ip_network(net, strict=False))
             except ValueError:
-                # Invalid network, will be caught in validation
-                pass
+                self.invalid_networks.append(str(net))
 
     @staticmethod
     def _normalize_mac(mac: str) -> Optional[str]:
@@ -175,23 +188,49 @@ class AssessmentScope:
             return False
 
     def validate(self) -> List[str]:
-        """Validate scope definition, return list of errors."""
+        """Validate scope definition, return list of errors.
+
+        Never raises. This is the function that reports malformed scope, so a malformed
+        entry crashing it is the one failure it must not have: ``1 <= ch <= 196`` raised
+        ``TypeError`` on a channel declared as a string, which is exactly the input it
+        exists to report.
+        """
         errors = []
-        # Validate BSSIDs
-        for bssid in self.authorized_bssids:
-            if not self._normalize_mac(bssid):
-                errors.append(f"Invalid BSSID format: {bssid}")
-        # Validate networks
-        for net in self.authorized_networks:
-            try:
-                ipaddress.ip_network(net, strict=False)
-            except ValueError:
-                errors.append(f"Invalid network CIDR: {net}")
+        # BSSIDs and networks were already parsed in __post_init__; report what was
+        # dropped there rather than parsing a second time and risking a different answer.
+        for bssid in self.invalid_bssids:
+            errors.append(f"Invalid BSSID format: {bssid}")
+        for net in self.invalid_networks:
+            errors.append(f"Invalid network CIDR: {net}")
         # Validate channels
         for ch in self.authorized_channels:
-            if not 1 <= ch <= 196:  # Covers 2.4GHz, 5GHz, 6GHz
+            number = self._channel_number(ch)
+            if number is None or not 1 <= number <= 196:  # Covers 2.4GHz, 5GHz, 6GHz
                 errors.append(f"Invalid channel: {ch}")
         return errors
+
+    @staticmethod
+    def _channel_number(channel: Any) -> Optional[int]:
+        """A channel as an int, or ``None`` if the value is not one.
+
+        Accepts the integral strings a configuration file produces, and rejects
+        anything that does not survive the round trip - ``6.5`` truncates to a valid
+        channel, so it is refused rather than quietly rounded.
+        """
+        if isinstance(channel, bool):
+            return None
+        if isinstance(channel, int):
+            return channel
+        try:
+            number = int(str(channel).strip())
+        except (TypeError, ValueError):
+            return None
+        try:
+            if float(str(channel).strip()) != number:
+                return None
+        except (TypeError, ValueError):
+            return None
+        return number
 
     def to_dict(self):
         return {
@@ -203,6 +242,10 @@ class AssessmentScope:
             "description": self.description,
             "allow_broadcast_discovery": self.allow_broadcast_discovery,
             "strict_mode": self.strict_mode,
+            # Recorded so the audit trail shows which declared authorizations were
+            # unusable, not only which were requested.
+            "invalid_bssids": list(self.invalid_bssids),
+            "invalid_networks": list(self.invalid_networks),
         }
 
 

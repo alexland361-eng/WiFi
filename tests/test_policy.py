@@ -545,3 +545,124 @@ def test_parameter_rule_families_are_declared():
         "domain",
     }
     assert all(isinstance(rule, ParameterRule) for rule in PARAMETER_RULES)
+
+
+# ------------------------------------------------- channel scope gate coupling
+#
+# The scope check coerces a channel with int() and, on failure, skips the check with a
+# comment saying parameter validation reports it. That coupling is load-bearing and
+# invisible: if parameter validation ever accepted a value int() rejects, an
+# out-of-scope channel would slip past the scope gate entirely, because the gate would
+# have skipped it and nothing else would have caught it.
+#
+# Both sides use int() and catch (TypeError, ValueError), so the sets match by
+# construction. These tests pin the construction rather than trusting it.
+
+from wifi_framework.utils.validation import validate_channel
+
+MALFORMED_CHANNELS = ["9.0", "0x9", "6abc", "abc", "", "  ", None, [9], {"channel": 9}, (9,), object()]
+
+#: Values `int()` accepts, so the scope gate evaluates them normally. `9.5` truncates to
+#: a channel the gate can check, which is the gate's business rather than a parse failure
+#: - though `AssessmentScope.validate` refuses it as a malformed declaration.
+PARSEABLE_CHANNELS = [9, "9", " 9 ", 9.5, 400]
+
+
+@pytest.mark.parametrize("channel", MALFORMED_CHANNELS)
+def test_a_channel_the_scope_gate_cannot_parse_is_refused_by_parameter_validation(channel):
+    """For every value that makes the scope gate's `int()` raise, parameter validation
+    must also refuse it - otherwise the value passes both checks."""
+    with pytest.raises((TypeError, ValueError)):
+        int(channel)  # confirms this value really does reach the gate's except branch
+
+    ok, reason = validate_channel(channel)
+    assert ok is False, f"{channel!r} skipped the scope gate and passed parameter validation"
+    assert reason
+
+
+@pytest.mark.parametrize("channel", [1, 6, 196, "6", " 11 "])
+def test_a_channel_the_scope_gate_can_parse_is_accepted_by_parameter_validation(channel):
+    """The other half: values the gate *can* check must not be refused by the parameter
+    stage, or the gate's decision would be irrelevant."""
+    ok, _reason = validate_channel(channel)
+    assert ok is True, f"{channel!r} is a usable channel but parameter validation refused it"
+
+
+#: Out-of-scope channels that reach a channel check. Measured, not assumed: the scope
+#: gate takes the values `int()` accepts and the parameter stage takes the rest.
+CHANNELS_CHECKED_AND_REFUSED = [
+    (9, "scope_denied_channel"),
+    ("9", "scope_denied_channel"),
+    (" 9 ", "scope_denied_channel"),
+    (400, "scope_denied_channel"),
+    (9.5, "scope_denied_channel"),      # int(9.5) is 9, which is out of scope
+    ("9.0", "invalid_channel"),
+    ("0x9", "invalid_channel"),
+    ("6abc", "invalid_channel"),
+    ("abc", "invalid_channel"),
+    ("  ", "invalid_channel"),
+    ({"channel": 9}, "invalid_channel"),
+]
+
+#: Values the parameter layer treats as "no channel supplied", so they never reach a
+#: channel check. They must still not come back approved.
+CHANNELS_TREATED_AS_ABSENT = ["", None, [9], (9,)]
+
+
+def test_every_out_of_scope_channel_is_refused_whichever_stage_catches_it():
+    """End to end through the real policy: scope authorises 1, 6 and 11, so every other
+    channel must be refused - by the scope gate when it can parse the value, and by
+    parameter validation when it cannot. Which stage catches it does not matter;
+    approval does."""
+    registry = load_all_adapters(CapabilityRegistry())
+    scope = AssessmentScope(authorized_channels=[1, 6, 11])
+    policy = ActionPolicy(scope=scope, registry=registry)
+
+    for channel, expected_code in CHANNELS_CHECKED_AND_REFUSED:
+        action_request = request(
+            "horst", "horst", interface="wlan0mon", parameters={"channel": channel}
+        )
+        result = policy.validate(action_request)
+        rejection = result.rejection or {}
+
+        assert result.status != "approved", f"channel {channel!r} was approved out of scope"
+        assert rejection.get("code") == expected_code, (
+            f"channel {channel!r} was refused as {rejection.get('code')} at the "
+            f"{rejection.get('stage')} stage; the two stages between them must cover "
+            "every value that reaches a channel check"
+        )
+
+
+def test_a_channel_treated_as_absent_is_never_approved():
+    """These never reach a channel check, so they prove nothing about the gate - but a
+    value the parameter layer cannot interpret must not turn into an authorization."""
+    registry = load_all_adapters(CapabilityRegistry())
+    scope = AssessmentScope(authorized_channels=[1, 6, 11])
+    policy = ActionPolicy(scope=scope, registry=registry)
+
+    for channel in CHANNELS_TREATED_AS_ABSENT:
+        action_request = request(
+            "horst", "horst", interface="wlan0mon", parameters={"channel": channel}
+        )
+        result = policy.validate(action_request)
+        assert result.status != "approved", (
+            f"channel {channel!r} was interpreted as no channel at all and approved"
+        )
+
+
+def test_an_in_scope_channel_is_not_refused_by_the_scope_gate():
+    """Positive control: the gate must actually let authorized channels through, or the
+    refusals above would also pass with a gate that refuses everything."""
+    registry = load_all_adapters(CapabilityRegistry())
+    scope = AssessmentScope(authorized_channels=[1, 6, 11])
+    policy = ActionPolicy(scope=scope, registry=registry)
+
+    for channel in [6, "6"]:
+        result = policy.validate(request("horst", "horst", interface="wlan0mon", parameters={"channel": channel}))
+        rejection = result.rejection or {}
+        assert rejection.get("code") != "scope_denied_channel", (
+            f"channel {channel!r} is authorised but the scope gate refused it"
+        )
+        assert rejection.get("code") != "invalid_channel", (
+            f"channel {channel!r} is a valid channel but parameter validation refused it"
+        )
