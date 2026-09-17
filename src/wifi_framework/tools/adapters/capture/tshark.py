@@ -66,7 +66,12 @@ class TsharkAdapter(ToolAdapterBase):
         if exit_code != 0 and not combined.strip():
             return []
 
-        return tshark_to_evidences(combined, interface=interface, execution_id=self.execution_id)
+        issues: List[str] = []
+        evidences = tshark_to_evidences(
+            combined, interface=interface, execution_id=self.execution_id, issues=issues
+        )
+        self.parse_warnings.extend(issues)
+        return evidences
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]):
         return True, []

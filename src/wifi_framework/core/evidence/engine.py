@@ -238,6 +238,11 @@ class EvidenceEngine:
                 issues.append(
                     f"artifact {artifact.id} ({artifact.kind}) exceeded the size cap and was truncated"
                 )
+        # Problems the parser reported: a document that did not parse, an output format
+        # it did not recognise. These are not execution failures - the tool ran and
+        # exited cleanly - but they mean the observations are less complete than they
+        # look, which is exactly what parse_issues is for.
+        issues.extend(execution.warnings or [])
         return issues
 
     def _observation(

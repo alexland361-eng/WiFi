@@ -485,6 +485,9 @@ class ExecutionGateway:
     @staticmethod
     def _classify(legacy: Any, artifacts: List[ArtifactRef]) -> Tuple[str, Optional[ExecutionFailure], List[str]]:
         warnings: List[str] = []
+        # Extraction problems the parser could not express as evidence. The run is not
+        # a failure, so this is the only channel that carries them.
+        warnings.extend(getattr(legacy, "parse_warnings", None) or [])
         reason = legacy.failure_reason
         executed = bool(legacy.raw_command)
 

@@ -43,6 +43,7 @@ class AdapterExecutionResult:
         failure_reason: Optional[str] = None,
         raw_command: str = "",
         argv: Optional[List[str]] = None,
+        parse_warnings: Optional[List[str]] = None,
     ):
         self.success = success
         self.raw_output = raw_output
@@ -59,6 +60,13 @@ class AdapterExecutionResult:
         #: filter) becomes two elements. Consumers that need to re-run or inspect
         #: the command must use this, not ``raw_command.split()``.
         self.argv: List[str] = list(argv) if argv else []
+        #: Extraction problems the parser noticed but could not express as evidence:
+        #: a truncated document, an unrecognised output format. The tool succeeded and
+        #: the run is not a failure, but the output is less trustworthy than a clean
+        #: parse, and saying so is the difference between "nothing was observed" and
+        #: "nothing was there". Carried to ``ExecutionResult.warnings`` and from there
+        #: into ``EvidenceSet.parse_issues``.
+        self.parse_warnings: List[str] = list(parse_warnings) if parse_warnings else []
 
 
 class ToolAdapterBase(ABC):
@@ -72,6 +80,10 @@ class ToolAdapterBase(ABC):
     def __init__(self, metadata: ToolCapabilityMetadata):
         self.metadata = metadata
         self.execution_id = str(uuid.uuid4())
+        #: Problems the parser wants reported. Reset before each parse; an adapter
+        #: appends to it from ``parse_output``, which returns evidence and has no other
+        #: way to say "this output did not fully parse".
+        self.parse_warnings: List[str] = []
 
     @property
     def name(self) -> str:
@@ -265,6 +277,7 @@ class ToolAdapterBase(ABC):
 
         # Parse output
         try:
+            self.parse_warnings = []
             evidences = self.parse_output(stdout, stderr, exit_code, parameters, interface)
             # Tag evidences with execution_id
             for ev in evidences:
@@ -297,6 +310,7 @@ class ToolAdapterBase(ABC):
             duration=duration,
             evidences=evidences,
             failure_reason=failure_reason,
+            parse_warnings=list(self.parse_warnings),
             raw_command=raw_command_str,
             argv=cmd,
         )

@@ -5,13 +5,19 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
 
 
-def parse_tshark_json(output: str) -> List[Dict[str, Any]]:
-    """Parse tshark -T json output."""
+def parse_tshark_json(output: str, issues: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Parse tshark -T json output.
+
+    ``issues``, when given, receives a description of any extraction problem. tshark
+    is stopped by a timeout or a capture filter mid-write often enough that truncated
+    JSON is a normal outcome, and a truncated document parses to nothing - which
+    reads as "no packets captured" unless the failure is declared.
+    """
     results = []
     try:
         data = json.loads(output)
@@ -30,8 +36,13 @@ def parse_tshark_json(output: str) -> List[Dict[str, Any]]:
                         entry["bssid"] = wlan.get("wlan.bssid") or wlan.get("wlan.da")
                         entry["ssid"] = wlan.get("wlan_mgt.ssid")
                 results.append(entry)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as exc:
+        if issues is not None:
+            issues.append(
+                f"tshark JSON output could not be parsed ({exc.msg} at position {exc.pos}); "
+                "the empty result means the output was unusable or truncated, not that no "
+                "packets were captured"
+            )
     return results
 
 
@@ -48,11 +59,21 @@ def parse_tshark_fields(output: str) -> List[Dict[str, Any]]:
     return results
 
 
-def tshark_to_evidences(output: str, interface: str = None, execution_id: str = None) -> List[Evidence]:
+def tshark_to_evidences(
+    output: str,
+    interface: str = None,
+    execution_id: str = None,
+    issues: Optional[List[str]] = None,
+) -> List[Evidence]:
+    """Convert tshark output to evidences.
+
+    ``issues`` collects extraction problems for the caller to report; see
+    :func:`parse_tshark_json`.
+    """
     evidences = []
     # Try JSON first
     if output.strip().startswith("[") or output.strip().startswith("{"):
-        parsed = parse_tshark_json(output)
+        parsed = parse_tshark_json(output, issues=issues)
         for entry in parsed:
             ev = Evidence.from_tool_output(
                 tool_name="tshark",

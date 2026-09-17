@@ -68,7 +68,12 @@ class NmapAdapter(ToolAdapterBase):
             return []
 
         target = parameters.get("target") or parameters.get("target_ip") or parameters.get("ip")
-        return nmap_to_evidences(combined, target=target, execution_id=self.execution_id)
+        issues: List[str] = []
+        evidences = nmap_to_evidences(
+            combined, target=target, execution_id=self.execution_id, issues=issues
+        )
+        self.parse_warnings.extend(issues)
+        return evidences
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]):
         target = parameters.get("target") or parameters.get("target_ip") or parameters.get("ip")

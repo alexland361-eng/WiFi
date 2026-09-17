@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
 
@@ -117,8 +117,16 @@ def parse_nmap_normal(output: str) -> List[Dict[str, Any]]:
     return hosts
 
 
-def parse_nmap_xml(xml_content: str) -> List[Dict[str, Any]]:
-    """Parse nmap XML output."""
+def parse_nmap_xml(xml_content: str, issues: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Parse nmap XML output.
+
+    ``issues``, when given, receives a description of any extraction problem. A
+    document that does not parse yields an empty list, which is indistinguishable
+    from "nmap found no hosts" unless the failure is reported - and the difference
+    matters, because one is an observation and the other is a missing one.
+    ``contracts/evidence.py`` states the rule: extraction problems are declared, not
+    hidden.
+    """
     hosts = []
     try:
         root = ET.fromstring(xml_content)
@@ -167,19 +175,33 @@ def parse_nmap_xml(xml_content: str) -> List[Dict[str, Any]]:
                         continue
 
             hosts.append(host_data)
-    except ET.ParseError:
-        pass
+    except ET.ParseError as exc:
+        if issues is not None:
+            issues.append(
+                f"nmap XML output could not be parsed ({exc}); the empty result means the "
+                "output was unusable, not that no hosts were found"
+            )
+        return hosts
 
     return hosts
 
 
-def nmap_to_evidences(output: str, target: str = None, execution_id: str = None) -> List[Evidence]:
-    """Convert nmap output to evidences."""
+def nmap_to_evidences(
+    output: str,
+    target: str = None,
+    execution_id: str = None,
+    issues: Optional[List[str]] = None,
+) -> List[Evidence]:
+    """Convert nmap output to evidences.
+
+    ``issues`` collects extraction problems for the caller to report; see
+    :func:`parse_nmap_xml`.
+    """
     evidences = []
 
     # Try XML first
     if output.strip().startswith("<?xml") or "<nmaprun" in output:
-        hosts = parse_nmap_xml(output)
+        hosts = parse_nmap_xml(output, issues=issues)
     elif "Host:" in output and "Ports:" in output:
         hosts = parse_nmap_grepable(output)
     else:
