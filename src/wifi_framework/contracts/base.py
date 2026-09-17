@@ -185,7 +185,11 @@ class BaseContract:
         Used for the experience record's ``state_before`` / ``state_after`` fields, so a
         state transition is identifiable without embedding the whole state in the record.
         """
-        encoded = json.dumps(self.to_message(), sort_keys=True, separators=(",", ":"), default=str)
+        # to_jsonable has already normalised every value, including its deterministic
+        # last resort, so no `default=` hook is needed here. Passing `default=str`
+        # would reintroduce address-bearing reprs and make the digest vary between
+        # processes, contradicting the determinism this method promises.
+        encoded = json.dumps(to_jsonable(self.to_message()), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------ parsing
@@ -362,5 +366,5 @@ def message_digest(message: Any) -> str:
     """SHA-256 digest of any contract or JSON-serialisable mapping."""
     if isinstance(message, BaseContract):
         return message.digest()
-    encoded = json.dumps(to_jsonable(message), sort_keys=True, separators=(",", ":"), default=str)
+    encoded = json.dumps(to_jsonable(message), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

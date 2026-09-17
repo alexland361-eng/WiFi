@@ -11,10 +11,15 @@ that execution, and the artifacts it was derived from (``wasDerivedFrom`` -> ``d
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+#: Matches CPython's default object repr, which embeds a memory address.
+_DEFAULT_REPR = re.compile(r"^<.* object at 0x[0-9a-fA-F]+>$")
 
 
 def to_jsonable(value: Any) -> Any:
@@ -49,7 +54,22 @@ def to_jsonable(value: Any) -> Any:
 
         return {f.name: to_jsonable(getattr(value, f.name)) for f in dc_fields(value)}
     # Last resort: keep the message serialisable rather than raising mid-assessment.
-    return str(value)
+    text = str(value)
+    # A default object repr embeds a memory address - `<Foo object at 0x7f8a2c>` -
+    # so using it verbatim makes the value differ between processes, and with it
+    # every digest built from it. `digest()` is documented as deterministic and is
+    # used for the experience record's state_before/state_after, so a digest that
+    # changes between runs would report a state transition that never happened.
+    # Within one process CPython reuses freed addresses, which hides this: two
+    # instances digest identically in-process and differently across processes.
+    # Substituting the type name keeps serialisation total and deterministic. It
+    # does conflate two distinct instances of an unserialisable type, which is
+    # acceptable because contract fields are typed dataclasses and primitives; an
+    # opaque object reaching here is already a modelling bug, and it is now a
+    # visible, stable one rather than a silently unstable hash.
+    if _DEFAULT_REPR.match(text):
+        return f"<unserialisable {type(value).__module__}.{type(value).__qualname__}>"
+    return text
 
 
 class TargetType(str, Enum):

@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import subprocess
+import sys
+
 import pytest
 
 from wifi_framework.contracts import (
@@ -715,3 +718,71 @@ def test_information_gain_is_bounded():
         outcome=ActionOutcome(information_gain=1.5),
     )
     assert any(issue.code == "out_of_range" for issue in record.structural_issues())
+
+
+# ---------------------------------------------------------------- digest determinism
+#
+# `digest()` is documented as a deterministic SHA-256 and feeds the experience
+# record's state_before/state_after. A digest that varies between processes reports
+# a state transition that never happened.
+
+
+def test_an_unserialisable_value_does_not_make_the_digest_vary_between_processes():
+    """Cross-process, because the bug is invisible within one.
+
+    CPython reuses freed addresses, so two instances in the same process digest
+    identically and the defect only appears across runs. `default=str` in the
+    encoder produced `<Opaque object at 0x7f...>`, which changed every process.
+    """
+    code = (
+        "from wifi_framework.contracts.base import message_digest\n"
+        "class Opaque:\n"
+        "    pass\n"
+        "print(message_digest({'x': Opaque()}))\n"
+    )
+
+    digests = set()
+    for _ in range(3):
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=90)
+        assert proc.returncode == 0, proc.stderr
+        digests.add(proc.stdout.strip())
+
+    assert len(digests) == 1, f"digest varied between processes: {digests}"
+
+
+def test_to_jsonable_substitutes_a_stable_name_for_a_default_object_repr():
+    from wifi_framework.contracts.common import to_jsonable
+
+    class Opaque:
+        pass
+
+    result = to_jsonable(Opaque())
+
+    assert "0x" not in result, f"memory address leaked into serialisation: {result!r}"
+    assert "Opaque" in result
+
+
+def test_to_jsonable_preserves_a_meaningful_str():
+    """The substitution must not discard a deliberately stable representation."""
+    from wifi_framework.contracts.common import to_jsonable
+
+    class Named:
+        def __str__(self) -> str:
+            return "stable-value"
+
+    assert to_jsonable(Named()) == "stable-value"
+
+
+def test_a_contract_digest_is_unchanged_by_repeated_serialisation():
+    from wifi_framework.contracts.world_state import WorldState
+
+    state = WorldState(
+        assessment_id="DIGEST-TEST",
+        phase="wireless_observation",
+        scope={},
+        channels_observed=[1, 6, 11],
+        last_updated="2026-01-01T00:00:00+00:00",
+    )
+
+    assert state.digest() == state.digest()
+    assert state.digest() == WorldState.parse(state.to_message()).digest()
