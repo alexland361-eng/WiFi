@@ -132,3 +132,7 @@ audit_logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Transcripts produced by scripts/exercise_framework.py.
+# They describe the machine they ran on; keep them out of git.
+exercise_log_*.txt
