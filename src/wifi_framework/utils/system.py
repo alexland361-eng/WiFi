@@ -100,37 +100,99 @@ def get_interface_list() -> list[str]:
     return []
 
 
+#: Seconds to wait between SIGTERM and SIGKILL when tearing down a timed-out tool.
+TERMINATE_GRACE_SECONDS = 3.0
+
+
+def terminate_process_group(proc: "subprocess.Popen", grace_seconds: float = TERMINATE_GRACE_SECONDS) -> bool:
+    """Signal a process *and its children*, escalating SIGTERM to SIGKILL.
+
+    ``subprocess.run(timeout=...)`` kills only the direct child. A wireless tool
+    that spawns helpers - a capture utility, a monitor-mode daemon - therefore
+    survives a timeout and keeps holding the radio, which blocks every later
+    operation on that interface and can leave it stuck in monitor mode after the
+    assessment ends. Starting the child in its own session makes the whole tree
+    signalable as one group.
+
+    Returns True if the process was reaped, False if it could not be signalled.
+    """
+    import os
+    import signal
+
+    if proc.poll() is not None:
+        return True
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, OSError):
+        return False
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            # Already gone, or not ours to signal. Nothing further to do.
+            return proc.poll() is not None
+        try:
+            proc.wait(timeout=grace_seconds)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return proc.poll() is not None
+
+
 def run_command(
     cmd: list[str],
     timeout: int = 30,
     check_privileges: bool = False,
+    terminate_grace_seconds: float = TERMINATE_GRACE_SECONDS,
 ) -> Tuple[int, str, str, float]:
     """
     Execute a command and return results.
 
-    Returns (exit_code, stdout, stderr, duration_seconds)
+    The child is started in its own session so that a timeout tears down the whole
+    process tree rather than leaving grandchildren running.
+
+    Returns (exit_code, stdout, stderr, duration_seconds). Exit code 124 means the
+    timeout elapsed, 127 that the executable was not found.
     """
+    import os
     import time
 
     start = time.time()
+    # start_new_session is POSIX-only; the framework targets Linux, but a Windows
+    # import must not explode at call time.
+    session_kwargs = {"start_new_session": True} if os.name == "posix" else {}
+    proc = None
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
+            **session_kwargs,
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            terminate_process_group(proc, terminate_grace_seconds)
+            # Grandchildren may still hold the pipes open, so bound this too.
+            try:
+                stdout, stderr = proc.communicate(timeout=terminate_grace_seconds)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
+            duration = time.time() - start
+            detail = (stderr or "").strip()
+            message = f"Command timed out after {timeout}s"
+            return 124, stdout or "", f"{message}: {detail}" if detail else message, duration
         duration = time.time() - start
-        return result.returncode, result.stdout, result.stderr, duration
-    except subprocess.TimeoutExpired as e:
-        duration = time.time() - start
-        stdout = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
-        stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
-        return 124, stdout, f"Command timed out after {timeout}s: {stderr}", duration
+        return proc.returncode, stdout or "", stderr or "", duration
     except FileNotFoundError as e:
         duration = time.time() - start
         return 127, "", f"Command not found: {e}", duration
     except Exception as e:
+        if proc is not None:
+            terminate_process_group(proc, terminate_grace_seconds)
         duration = time.time() - start
         return 1, "", f"Execution failed: {e}", duration
 
