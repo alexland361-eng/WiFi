@@ -1364,7 +1364,7 @@ Six commits, every fix mutation-checked.
 - Added `parsers.rsn`: byte RSN, hexadecimal RSN, RSNX, and `iw` text decoding.
 - Added `parse_iw_scan` and `iw_scan_to_evidences`; added the real, passive `iw_scan` capability/adapter and capability YAML.
 - Added `parsers.wpa_config`; it discards `wpa_passphrase`, `sae_password`, `psk`, and `password` values instead of retaining secrets.
-- Added `docs/WPA3_DRAGONBLOOD.md`, offline SAE capture analysis, and 41 focused tests.
+- Added `docs/WPA3_DRAGONBLOOD.md`, offline SAE capture analysis, and 42 focused tests.
 
 ### Limits kept explicit
 - No dragondrain/commit flood, dragonforce/password partitioning, dragonslayer/EAP-pwd reflection, rogue-AP downgrade, or deauthentication implementation was added. These would turn a posture auditor into a credential-recovery or denial-of-service tool.
@@ -1372,7 +1372,7 @@ Six commits, every fix mutation-checked.
 - Enterprise/EAP-pwd is recognized at the profile level, but a RADIUS-side audit is not fabricated from a beacon AKM label. It remains a separate adapter milestone.
 
 ### Verification
-- 41 WPA3 tests pass; the full suite passes with 878 tests and 70.45% coverage against the 68% gate. Ruff is clean and mypy remains at its baseline of 30 findings.
+- 42 WPA3 tests pass; the full suite passes with 879 tests and 70.46% coverage against the 68% gate. Ruff is clean and mypy remains at its baseline of 30 findings.
 
 ### Continuation: WPA3 posture integration
 
@@ -1380,6 +1380,6 @@ Six commits, every fix mutation-checked.
 - Added assessment-engine projection of Dragonblood exposure into ordinary findings. These findings carry `wpa3`/`dragonblood` tags, preserve evidence IDs, and never become verified from a passive observation.
 - Added tests proving RSN posture survives world-model update, transition-mode findings reach the assessment finding store, and control-client evidence cannot retain passphrases.
 - Added real `hostap_cli`/`wpa_cli` configuration/status adapters. The secret sanitizer runs before `Evidence.raw_output`, because parsing a secret away after storing raw output would still leak it.
-- Added an explicit-field-only SAE capture parser and offline tshark adapter. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes.
+- Added an explicit-field-only SAE capture parser and offline tshark adapter. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution.
 - Found and fixed a stale-finding path: an unresolved beacon finding now gets refined by later authorized capture/configuration evidence; verified findings are never downgraded.
 - Verification after this continuation: 877 tests passed, coverage 70.39%, Ruff clean, mypy 30 at baseline, and the registry contains 62 capabilities.

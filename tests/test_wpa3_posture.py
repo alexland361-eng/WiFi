@@ -464,3 +464,15 @@ def test_later_sae_capture_refines_an_unresolved_wpa3_finding(tmp_path) -> None:
     assert refined.status.value == "supported"
     assert refined.details["exposed"] is False
     assert capture.id in refined.evidence_ids
+
+
+def test_offline_sae_adapter_rejects_missing_capture_before_execution(tmp_path) -> None:
+    from wifi_framework.tools.adapters.capture.sae import METADATA, SaeCaptureAnalysisAdapter
+
+    adapter = SaeCaptureAnalysisAdapter(METADATA)
+    ok, errors = adapter.custom_parameter_validation({"read_file": str(tmp_path / "missing.pcapng")})
+    assert ok is False
+    assert "does not exist" in errors[0]
+    capture = tmp_path / "authorized.pcapng"
+    capture.write_bytes(b"fixture")
+    assert adapter.custom_parameter_validation({"read_file": str(capture)}) == (True, [])

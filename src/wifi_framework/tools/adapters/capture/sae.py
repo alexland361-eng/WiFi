@@ -1,6 +1,7 @@
 """Offline SAE negotiation analysis using tshark's real dissector."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
 
 from ....core.execution.adapter_base import ToolAdapterBase
@@ -63,6 +64,11 @@ class SaeCaptureAnalysisAdapter(ToolAdapterBase):
         read_file = parameters.get("read_file")
         if not isinstance(read_file, str) or not read_file.strip():
             return False, ["read_file is required for offline SAE analysis"]
+        path = Path(read_file).expanduser()
+        if read_file.startswith("-"):
+            return False, ["read_file must not be a command option"]
+        if not path.is_file():
+            return False, [f"capture file does not exist: {read_file}"]
         return True, []
 
 
