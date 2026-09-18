@@ -30,8 +30,12 @@ def _walk_values(value: Any) -> Iterable[tuple[str, Any]]:
 def _integer(value: Any) -> Optional[int]:
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
-        return int(value.strip())
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"\d+", text):
+            return int(text)
+        if re.fullmatch(r"0x[0-9A-Fa-f]+", text):
+            return int(text, 16)
     return None
 
 
@@ -43,6 +47,7 @@ def _packet_observation(layers: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     sequence = None
     status = None
     group: Optional[int] = None
+    transition_disable: Optional[int] = None
     for key, value in fields:
         lower = key.lower()
         if "auth_alg" in lower or lower.endswith("authentication.algorithm"):
@@ -58,6 +63,8 @@ def _packet_observation(layers: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             and "group" in lower
         ):
             group = _integer(value)
+        elif "transition" in lower and "disable" in lower:
+            transition_disable = _integer(value)
 
     # Authentication algorithm 3 is SAE. If the dissector did not expose the algorithm,
     # an explicit SAE group field is still sufficient to establish that this is SAE data.
@@ -72,6 +79,8 @@ def _packet_observation(layers: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         result["status_code"] = status
     if group is not None:
         result["sae_group"] = group
+    if transition_disable is not None:
+        result["transition_disable_mask"] = transition_disable
     for key in ("wlan.sa", "wlan.ta", "wlan.da", "wlan.bssid"):
         if key in flat and isinstance(flat[key], str):
             normalized = normalize_mac(flat[key])
@@ -108,9 +117,15 @@ def parse_sae_tshark_json(output: str, issues: Optional[List[str]] = None) -> Li
             groups.add(observation["sae_group"])
         observations.append(observation)
     if observations:
+        transition_masks = {
+            item["transition_disable_mask"] for item in observations
+            if "transition_disable_mask" in item
+        }
         summary: Dict[str, Any] = {
             "sae": True,
             "sae_groups": sorted(groups),
+            **({"transition_disable_mask": sorted(transition_masks)[0]}
+               if transition_masks else {}),
             **({"bssid": observations[0]["bssid"]} if "bssid" in observations[0] else {}),
             "sae_observation_count": len(observations),
             "sae_commit_count": sum(item.get("authentication_sequence") == 1 for item in observations),
@@ -159,6 +174,11 @@ def parse_sae_tshark_fields(
         if group is not None:
             item["sae_group"] = group
             groups.add(group)
+        for key, value in row.items():
+            if "transition" in key and "disable" in key:
+                mask = _integer(value)
+                if mask is not None:
+                    item["transition_disable_mask"] = mask
         for key in ("wlan.bssid", "wlan.sa", "wlan.da"):
             if key in row and row[key].strip():
                 normalized = normalize_mac(row[key].strip())
@@ -169,8 +189,14 @@ def parse_sae_tshark_fields(
         issues.append("field output contained no explicit SAE observations")
     if not observations:
         return []
+    transition_masks = {
+        item["transition_disable_mask"] for item in observations
+        if "transition_disable_mask" in item
+    }
     return [{
         "sae": True,
+        **({"transition_disable_mask": sorted(transition_masks)[0]}
+           if transition_masks else {}),
         **({"bssid": observations[0]["bssid"]} if "bssid" in observations[0] else {}),
         "sae_groups": sorted(groups),
         "sae_observation_count": len(observations),

@@ -270,7 +270,9 @@ class WorldModel:
                     self.clients[client_mac].associated_bssid = bssid
                 self.access_points[bssid].client_macs.add(client_mac)
 
-        elif etype == EvidenceType.HANDSHAKE and data.get("sae_groups"):
+        elif etype == EvidenceType.HANDSHAKE and (
+            data.get("sae_groups") or "transition_disable_mask" in data
+        ):
             # Offline SAE capture evidence can fill the group field that a beacon cannot
             # provide. It remains observation evidence; no attack result is implied.
             bssid = data.get("bssid")
@@ -284,6 +286,9 @@ class WorldModel:
                     posture["sae_observation_count"] = data.get("sae_observation_count")
                     posture["sae_commit_count"] = data.get("sae_commit_count")
                     posture["sae_confirm_count"] = data.get("sae_confirm_count")
+                    if "transition_disable_mask" in data:
+                        posture["transition_disable_configured"] = bool(data["transition_disable_mask"] & 1)
+                        posture["transition_disable_mask"] = data["transition_disable_mask"]
                     posture["source"] = "offline SAE capture"
                 self.access_points[bssid].last_seen = evidence.timestamp
                 if evidence.id not in self.access_points[bssid].evidence_ids:

@@ -599,3 +599,18 @@ def test_wpa_status_adapter_is_read_only() -> None:
     )[0]
     assert evidence.parsed_data["sae_groups"] == [19]
     assert evidence.parsed_data["connection_state"] == "COMPLETED"
+
+
+def test_sae_capture_parser_extracts_explicit_transition_disable_mask() -> None:
+    import json
+    from wifi_framework.parsers.sae import parse_sae_tshark_json
+
+    packets = [{"_source": {"layers": {
+        "wlan": {
+            "wlan.fixed.auth_alg": "3",
+            "wlan.wfa.transition_disable": "0x01",
+            "wlan.bssid": "00:11:22:33:44:55",
+        }
+    }}}]
+    result = parse_sae_tshark_json(json.dumps(packets))
+    assert result[0]["transition_disable_mask"] == 1

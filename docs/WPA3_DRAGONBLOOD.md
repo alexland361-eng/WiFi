@@ -87,6 +87,13 @@ configuration; a beacon alone cannot establish that EAP-pwd is enabled or patche
 RADIUS-side adapter is intentionally kept separate from the SAE scan so an enterprise result
 cannot be fabricated from an AKM label alone.
 
+## Transition Disable from captures
+
+Transition Disable is carried in four-way-handshake key data rather than a beacon. Offline
+SAE/tshark analysis now retains a Transition Disable mask only when tshark explicitly labels
+the field. Generic payload bytes are not decoded by guesswork. The WPA3 Personal bit can then
+be retained in the BSSID posture for later assessment; absence of the field remains unknown.
+
 ## Connected supplicant status
 
 `wpa_supplicant_wpa3_status` executes `wpa_cli -i <interface> status`. It reads the group and
