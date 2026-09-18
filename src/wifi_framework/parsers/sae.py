@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+from ..utils.validation import normalize_mac
+
 
 class SaeParseError(ValueError):
     """A structured capture result was malformed."""
@@ -72,7 +74,9 @@ def _packet_observation(layers: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         result["sae_group"] = group
     for key in ("wlan.sa", "wlan.ta", "wlan.da", "wlan.bssid"):
         if key in flat and isinstance(flat[key], str):
-            result[key.rsplit(".", 1)[1]] = flat[key]
+            normalized = normalize_mac(flat[key])
+            if normalized is not None:
+                result[key.rsplit(".", 1)[1]] = normalized
     return result
 
 
@@ -157,7 +161,9 @@ def parse_sae_tshark_fields(
             groups.add(group)
         for key in ("wlan.bssid", "wlan.sa", "wlan.da"):
             if key in row and row[key].strip():
-                item[key.rsplit(".", 1)[1]] = row[key].strip()
+                normalized = normalize_mac(row[key].strip())
+                if normalized is not None:
+                    item[key.rsplit(".", 1)[1]] = normalized
         observations.append(item)
     if not observations and issues is not None:
         issues.append("field output contained no explicit SAE observations")

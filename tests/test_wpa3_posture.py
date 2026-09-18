@@ -477,3 +477,18 @@ def test_offline_sae_adapter_rejects_missing_capture_before_execution(tmp_path) 
     capture = tmp_path / "authorized.pcapng"
     capture.write_bytes(b"fixture")
     assert adapter.custom_parameter_validation({"read_file": str(capture)}) == (True, [])
+
+
+def test_sae_capture_parser_uses_canonical_mac_identity() -> None:
+    import json
+    from wifi_framework.parsers.sae import parse_sae_tshark_json
+
+    packets = [{"_source": {"layers": {
+        "wlan": {
+            "wlan.fixed.auth_alg": "3",
+            "wlan.sae.group": "19",
+            "wlan.bssid": "aa-bb-cc-dd-ee-ff",
+        }
+    }}}]
+    result = parse_sae_tshark_json(json.dumps(packets))
+    assert result[0]["bssid"] == "AA:BB:CC:DD:EE:FF"
