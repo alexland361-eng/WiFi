@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `iw_scan` passive capability and `parse_iw_scan`, with real `iw dev <interface> scan` execution and access-point evidence. Transition mode, H2E advertisement, PMF posture, and malformed BSSID reporting are wired into evidence.
 - WPA configuration audit parser for `sae_groups`, `sae_pwe`, PMF, anti-clogging threshold, Transition Disable, and AKM settings. Password and SAE secret values are never retained.
 - `docs/WPA3_DRAGONBLOOD.md` documenting research grounding, evidence limits, remediation, and the explicit non-implementation of credential recovery, commit floods, rogue-AP downgrade, and EAP-pwd reflection tools.
-- 31 focused WPA3 posture, RSN, `iw scan`, and configuration-audit tests.
+- 33 focused WPA3 posture, RSN, `iw scan`, configuration-audit, world-model, and assessment-integration tests.
 
 ### Security
 - Passive observations never invent SAE groups, PWE mode, implementation version, or Transition Disable status. Unsupported active attack claims remain unresolved rather than being promoted to verified findings.

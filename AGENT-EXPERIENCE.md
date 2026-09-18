@@ -1364,7 +1364,7 @@ Six commits, every fix mutation-checked.
 - Added `parsers.rsn`: byte RSN, hexadecimal RSN, RSNX, and `iw` text decoding.
 - Added `parse_iw_scan` and `iw_scan_to_evidences`; added the real, passive `iw_scan` capability/adapter and capability YAML.
 - Added `parsers.wpa_config`; it discards `wpa_passphrase`, `sae_password`, `psk`, and `password` values instead of retaining secrets.
-- Added `docs/WPA3_DRAGONBLOOD.md` and 31 focused tests.
+- Added `docs/WPA3_DRAGONBLOOD.md` and 33 focused tests.
 
 ### Limits kept explicit
 - No dragondrain/commit flood, dragonforce/password partitioning, dragonslayer/EAP-pwd reflection, rogue-AP downgrade, or deauthentication implementation was added. These would turn a posture auditor into a credential-recovery or denial-of-service tool.
@@ -1372,4 +1372,11 @@ Six commits, every fix mutation-checked.
 - Enterprise/EAP-pwd is recognized at the profile level, but a RADIUS-side audit is not fabricated from a beacon AKM label. It remains a separate adapter milestone.
 
 ### Verification
-- 31 WPA3 tests pass; Ruff passes for the changed WPA3 files; targeted mypy reports no issues for the model, parsers, and iw adapter. Full suite: 868 passed with 70.04% coverage; Ruff and the type baseline are green. The coverage gate remains 68%.
+- 33 WPA3 tests pass; the full suite passes with 870 tests and 70.17% coverage against the 68% gate. Ruff is clean and mypy remains at its baseline of 30 findings.
+
+### Continuation: WPA3 posture integration
+
+- Projected the namespaced `wpa3` observation into `AccessPoint.extra` so existing world-model consumers keep their schema while the assessment engine can retain exact RSN/PWE/group evidence.
+- Added assessment-engine projection of Dragonblood exposure into ordinary findings. These findings carry `wpa3`/`dragonblood` tags, preserve evidence IDs, and never become verified from a passive observation.
+- Added tests proving RSN posture survives world-model update and that transition-mode findings reach the assessment finding store.
+- Verification after this continuation: 870 tests passed, coverage 70.17%, Ruff clean, mypy 30 at baseline, and `iw_scan` registration verified.

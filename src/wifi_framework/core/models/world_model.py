@@ -102,6 +102,21 @@ class AccessPoint:
         if "manufacturer" in data:
             self.manufacturer = data["manufacturer"]
 
+        # WPA3/RSN fields are deliberately kept under a namespaced extra payload. The
+        # generic AP model predates RSN capabilities; placing these observations here keeps
+        # older consumers compatible while preserving the exact posture for the assessment
+        # engine. Missing keys are not converted into false values.
+        wpa3_keys = {
+            "akm_suites", "akm_names", "mfpc", "mfpr", "h2e_advertised",
+            "sae_pk_advertised", "sae_groups", "sae_pwe", "anti_clogging_threshold",
+            "transition_disable_configured", "version", "source", "eap_pwd_configured",
+        }
+        wpa3_observations = {key: data[key] for key in wpa3_keys if key in data}
+        if wpa3_observations:
+            current = self.extra.setdefault("wpa3", {})
+            if isinstance(current, dict):
+                current.update(wpa3_observations)
+
         self.last_seen = evidence.timestamp
         if evidence.id not in self.evidence_ids:
             self.evidence_ids.append(evidence.id)

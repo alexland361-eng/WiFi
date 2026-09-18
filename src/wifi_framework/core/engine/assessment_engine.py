@@ -25,6 +25,7 @@ from ..models.assessment_state import AssessmentState, AssessmentPhase, Executio
 from ..models.scope import AssessmentScope, ScopeEnforcer
 from ..models.finding import Finding, FindingCategory, FindingSeverity, FindingStatus
 from ..models.evidence import EvidenceType
+from ..models.wpa3 import Wpa3Posture, assess_dragonblood_exposure
 from ..execution.registry import CapabilityRegistry, get_global_registry
 from ..execution.executor import CapabilityExecutor
 from ..execution.tool_manager import ToolManager
@@ -882,10 +883,51 @@ class AssessmentEngine:
                 return record.capability_name
         return None
 
+    def _update_wpa3_findings(self, bssid: str, ap: Any) -> None:
+        """Turn observed WPA3 posture into auditable, non-verified findings.
+
+        The model owns Dragonblood reasoning; the assessment engine only projects those
+        results into the existing finding store. This keeps the engine from re-parsing RSN
+        bytes or knowing how SAE works internally.
+        """
+        raw = ap.extra.get("wpa3")
+        if not isinstance(raw, dict) or not raw.get("akm_suites"):
+            return
+        allowed = {
+            "ssid", "akm_suites", "mfpc", "mfpr", "h2e_advertised", "sae_pk_advertised",
+            "sae_groups", "sae_pwe", "anti_clogging_threshold",
+            "transition_disable_configured", "implementation", "version", "source",
+            "eap_pwd_configured",
+        }
+        posture = Wpa3Posture(
+            bssid=bssid,
+            **{key: raw[key] for key in allowed if key in raw},
+        )
+        for exposure in assess_dragonblood_exposure(posture):
+            tag = f"wpa3:{exposure.attack}"
+            if any(tag in finding.tags and bssid in finding.affected_assets for finding in self.state.findings):
+                continue
+            status = FindingStatus(exposure.status.value)
+            finding = Finding(
+                title=f"WPA3 posture: {exposure.attack}",
+                description=exposure.detail,
+                category=FindingCategory(exposure.category.value),
+                severity=FindingSeverity(exposure.severity.value),
+                status=status,
+                confidence=0.8 if status is FindingStatus.SUPPORTED else 0.4,
+                affected_assets=[bssid],
+                details=exposure.to_dict(),
+                evidence_ids=list(ap.evidence_ids),
+                tags=[tag, "dragonblood", "wpa3"],
+            )
+            self.state.add_finding(finding)
+            self.audit_logger.log_finding(finding)
+
     def update_findings_from_world_model(self):
         """Generate findings from world model."""
         # AP findings
         for bssid, ap in self.state.world_model.access_points.items():
+            self._update_wpa3_findings(bssid, ap)
             # Check if we already have finding for this AP
             existing = [f for f in self.state.findings if bssid in f.affected_assets and f.category == FindingCategory.WIRELESS]
             if existing:

@@ -87,6 +87,10 @@ configuration; a beacon alone cannot establish that EAP-pwd is enabled or patche
 RADIUS-side adapter is intentionally kept separate from the SAE scan so an enterprise result
 cannot be fabricated from an AKM label alone.
 
+## World-model and finding integration
+
+`iw_scan` access-point evidence is retained under the namespaced `wpa3` field in `AccessPoint.extra`, so the existing world-model contract remains backward-compatible while preserving RSN/PWE/group observations. The assessment engine projects the model assessment into ordinary findings tagged `wpa3` and `dragonblood`, carrying the source evidence IDs. Passive observations remain hypotheses, supported findings, or unresolved findings; they are never silently promoted to verified.
+
 ## Evidence and safety boundary
 
 All passive results are observations or supported hypotheses. No Dragonblood result is marked

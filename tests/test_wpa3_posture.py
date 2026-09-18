@@ -272,3 +272,49 @@ def test_configured_old_eap_pwd_is_assessed_separately() -> None:
         "CVE-2019-9497, CVE-2019-9498, CVE-2019-9499",
     }
     assert all(f.exposed is True for f in findings)
+
+
+def test_world_model_preserves_rsn_posture_under_wpa3_namespace() -> None:
+    from wifi_framework.core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
+    from wifi_framework.core.models.world_model import WorldModel
+
+    evidence = Evidence.from_tool_output(
+        tool_name="iw", capability="wpa3_posture_scan", evidence_type=EvidenceType.ACCESS_POINT,
+        raw_output="fixture", parsed_data={
+            "bssid": "00:11:22:33:44:55", "ssid": "lab", "akm_suites": [8],
+            "mfpc": True, "mfpr": True, "h2e_advertised": True,
+            "source": "iw scan",
+        }, parameters={}, confidence=ConfidenceLevel.HIGH,
+    )
+    world = WorldModel()
+    world.update(evidence)
+    assert world.access_points["00:11:22:33:44:55"].extra["wpa3"] == {
+        "akm_suites": [8], "mfpc": True, "mfpr": True,
+        "h2e_advertised": True, "source": "iw scan",
+    }
+
+
+def test_assessment_engine_projects_wpa3_posture_into_findings(tmp_path) -> None:
+    from wifi_framework.core.engine.assessment_engine import AssessmentEngine
+    from wifi_framework.core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
+    from wifi_framework.core.models.scope import AssessmentScope
+    from wifi_framework.core.audit.logger import AuditLogger
+
+    engine = AssessmentEngine(
+        AssessmentScope(authorized_bssids=["00:11:22:33:44:55"]),
+        audit_logger=AuditLogger(log_dir=str(tmp_path / "audit")),
+        artifact_dir=str(tmp_path / "artifacts"),
+    )
+    evidence = Evidence.from_tool_output(
+        tool_name="iw", capability="wpa3_posture_scan", evidence_type=EvidenceType.ACCESS_POINT,
+        raw_output="fixture", parsed_data={
+            "bssid": "00:11:22:33:44:55", "ssid": "transition", "akm_suites": [2, 8],
+            "mfpc": True, "mfpr": False, "source": "iw scan",
+        }, parameters={}, confidence=ConfidenceLevel.HIGH,
+    )
+    engine.state.world_model.update(evidence)
+    engine.update_findings_from_world_model()
+    wpa_findings = [f for f in engine.state.findings if "wpa3" in f.tags]
+    assert wpa_findings
+    assert any("Transition downgrade" in f.title for f in wpa_findings)
+    assert all(f.status.value != "verified" for f in wpa_findings)
