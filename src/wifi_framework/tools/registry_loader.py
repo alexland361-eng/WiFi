@@ -48,6 +48,9 @@ def load_all_adapters(registry: Optional[CapabilityRegistry] = None) -> Capabili
     # Framework
     from .adapters.framework import metasploit_impacket
 
+    # Configuration/status audits
+    from .adapters.audit import wpa3
+
     # Register each
     modules = [
         iw,
@@ -88,6 +91,7 @@ def load_all_adapters(registry: Optional[CapabilityRegistry] = None) -> Capabili
         scapy_adapter,
         nuclei_nikto,
         metasploit_impacket,
+        wpa3,
     ]
 
     for mod in modules:

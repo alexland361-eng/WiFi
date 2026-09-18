@@ -1,0 +1,18 @@
+# WPA3 / Dragonblood posture audits
+- name: hostapd_wpa3_audit
+  tool_binary: hostapd_cli
+  category: wpa_assessment
+  description: "Read hostapd WPA3/SAE configuration through its control socket"
+  requirements:
+    os: [linux]
+    interface_required: true
+    privileges: []
+
+- name: wpa_supplicant_wpa3_audit
+  tool_binary: wpa_cli
+  category: wpa_assessment
+  description: "Read wpa_supplicant WPA3/SAE configuration through its control socket"
+  requirements:
+    os: [linux]
+    interface_required: true
+    privileges: []

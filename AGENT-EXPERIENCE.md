@@ -1364,7 +1364,7 @@ Six commits, every fix mutation-checked.
 - Added `parsers.rsn`: byte RSN, hexadecimal RSN, RSNX, and `iw` text decoding.
 - Added `parse_iw_scan` and `iw_scan_to_evidences`; added the real, passive `iw_scan` capability/adapter and capability YAML.
 - Added `parsers.wpa_config`; it discards `wpa_passphrase`, `sae_password`, `psk`, and `password` values instead of retaining secrets.
-- Added `docs/WPA3_DRAGONBLOOD.md` and 33 focused tests.
+- Added `docs/WPA3_DRAGONBLOOD.md` and 36 focused tests.
 
 ### Limits kept explicit
 - No dragondrain/commit flood, dragonforce/password partitioning, dragonslayer/EAP-pwd reflection, rogue-AP downgrade, or deauthentication implementation was added. These would turn a posture auditor into a credential-recovery or denial-of-service tool.
@@ -1378,5 +1378,6 @@ Six commits, every fix mutation-checked.
 
 - Projected the namespaced `wpa3` observation into `AccessPoint.extra` so existing world-model consumers keep their schema while the assessment engine can retain exact RSN/PWE/group evidence.
 - Added assessment-engine projection of Dragonblood exposure into ordinary findings. These findings carry `wpa3`/`dragonblood` tags, preserve evidence IDs, and never become verified from a passive observation.
-- Added tests proving RSN posture survives world-model update and that transition-mode findings reach the assessment finding store.
-- Verification after this continuation: 870 tests passed, coverage 70.17%, Ruff clean, mypy 30 at baseline, and `iw_scan` registration verified.
+- Added tests proving RSN posture survives world-model update, transition-mode findings reach the assessment finding store, and control-client evidence cannot retain passphrases.
+- Added real `hostap_cli`/`wpa_cli` configuration/status adapters. The secret sanitizer runs before `Evidence.raw_output`, because parsing a secret away after storing raw output would still leak it.
+- Verification after this continuation: focused tests pass, control-client adapters register, Ruff and targeted mypy are clean. Full suite: 873 passed with 70.29% coverage against the 68% gate; Ruff clean; mypy 30 at baseline; registry contains 61 capabilities.

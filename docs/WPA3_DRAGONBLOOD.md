@@ -87,6 +87,18 @@ configuration; a beacon alone cannot establish that EAP-pwd is enabled or patche
 RADIUS-side adapter is intentionally kept separate from the SAE scan so an enterprise result
 cannot be fabricated from an AKM label alone.
 
+## Control-client audits
+
+Two configuration/status capabilities use the real local control clients:
+
+- `hostapd_wpa3_audit`: `hostapd_cli -i <interface> get_config`
+- `wpa_supplicant_wpa3_audit`: `wpa_cli -i <interface> get_config`
+
+These capabilities are configuration/status observation, not SAE probing. Before the response
+becomes evidence, lines carrying `wpa_passphrase`, `sae_password`, `psk`, or `password` are
+replaced with `<redacted>`. The posture parser also omits those values. A missing control socket
+or tool is a real execution failure; it is not represented as a clean, patched configuration.
+
 ## World-model and finding integration
 
 `iw_scan` access-point evidence is retained under the namespaced `wpa3` field in `AccessPoint.extra`, so the existing world-model contract remains backward-compatible while preserving RSN/PWE/group observations. The assessment engine projects the model assessment into ordinary findings tagged `wpa3` and `dragonblood`, carrying the source evidence IDs. Passive observations remain hypotheses, supported findings, or unresolved findings; they are never silently promoted to verified.

@@ -16,6 +16,24 @@ def _values(settings: Dict[str, str], key: str) -> List[str]:
     return settings.get(key, "").split()
 
 
+_SECRET_KEYS = {"wpa_passphrase", "sae_password", "psk", "password"}
+
+
+def sanitize_wpa_config(text: str) -> str:
+    """Remove secret values before configuration text enters an evidence record."""
+    safe_lines: List[str] = []
+    for raw in text.splitlines():
+        if "=" not in raw:
+            safe_lines.append(raw)
+            continue
+        key, _value = (part.strip() for part in raw.split("=", 1))
+        if key in _SECRET_KEYS:
+            safe_lines.append(f"{key}=<redacted>")
+        else:
+            safe_lines.append(raw)
+    return "\n".join(safe_lines)
+
+
 def parse_wpa_config(
     text: str,
     *,

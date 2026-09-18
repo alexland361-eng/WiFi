@@ -18,7 +18,7 @@ from wifi_framework.core.models.wpa3 import (
 )
 from wifi_framework.parsers.iw import parse_iw_scan
 from wifi_framework.parsers.rsn import RsnParseError, parse_iw_rsn_lines, parse_rsn_ie, parse_rsn_ie_hex, parse_rsnx_ie
-from wifi_framework.parsers.wpa_config import parse_wpa_config
+from wifi_framework.parsers.wpa_config import parse_wpa_config, sanitize_wpa_config
 
 
 def suite(t: int) -> bytes:
@@ -318,3 +318,38 @@ def test_assessment_engine_projects_wpa3_posture_into_findings(tmp_path) -> None
     assert wpa_findings
     assert any("Transition downgrade" in f.title for f in wpa_findings)
     assert all(f.status.value != "verified" for f in wpa_findings)
+
+
+def test_wpa_config_sanitizer_removes_secrets_before_evidence() -> None:
+    safe = sanitize_wpa_config(
+        "wpa_passphrase=secret\nsae_password=dragon\npsk=another\nsae_pwe=1\n"
+    )
+    assert "secret" not in safe and "dragon" not in safe and "another" not in safe
+    assert "wpa_passphrase=<redacted>" in safe
+    assert "sae_pwe=1" in safe
+
+
+def test_control_client_audit_sanitizes_raw_evidence() -> None:
+    from wifi_framework.tools.adapters.audit.wpa3 import (
+        HOSTAPD_WPA3_AUDIT_METADATA,
+        HostapdWpa3AuditAdapter,
+    )
+
+    adapter = HostapdWpa3AuditAdapter(HOSTAPD_WPA3_AUDIT_METADATA)
+    output = "wpa_key_mgmt=SAE\nsae_pwe=1\nwpa_passphrase=top-secret\nsae_password=sae-secret\n"
+    evidence = adapter.parse_output(output, "", 0, {}, "wlan0")[0]
+    assert evidence.parsed_data["sae_pwe"] == 1
+    assert "top-secret" not in (evidence.raw_output or "")
+    assert "sae-secret" not in (evidence.raw_output or "")
+    assert adapter.build_command("wlan0", {}) == ["hostapd_cli", "-i", "wlan0", "get_config"]
+
+
+def test_control_client_audit_requires_interface() -> None:
+    from wifi_framework.tools.adapters.audit.wpa3 import (
+        HOSTAPD_WPA3_AUDIT_METADATA,
+        HostapdWpa3AuditAdapter,
+    )
+
+    adapter = HostapdWpa3AuditAdapter(HOSTAPD_WPA3_AUDIT_METADATA)
+    with pytest.raises(ValueError):
+        adapter.build_command(None, {})
