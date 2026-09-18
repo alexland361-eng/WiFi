@@ -1388,3 +1388,9 @@ Six commits, every fix mutation-checked.
 ### Command verification record
 
 - Added `docs/WPA3_TOOL_VERIFICATION.md` after checking the exact control-interface handlers in hostap source and the official iw/TShark documentation. It deliberately marks the tshark field name `wlan.fixed.auth_alg` as not live-verified because tshark is absent locally; `tshark -G fields` is the required deployment check.
+
+
+
+### Passive scan selection
+
+- Added `--scan-select` as a real `iw dev <interface> scan` selection flow. It reports unavailable `iw` and scan failures honestly, parses only live output, and exits after printing the selected AP rather than turning selection into an implicit attack.

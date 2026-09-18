@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import subprocess
 
 from ..core.models.scope import AssessmentScope
+from ..parsers.iw import parse_iw_scan
 from ..core.engine.assessment_engine import AssessmentEngine
 from ..core.execution.registry import get_global_registry
 from ..core.execution.tool_manager import ToolManager
@@ -102,6 +104,11 @@ Operational Philosophy:
         type=int,
         default=60,
         help="Timeout per tool execution in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--scan-select",
+        action="store_true",
+        help="Passively scan with iw, interactively select an AP, and exit without active testing",
     )
     parser.add_argument(
         "--discover-only",
@@ -345,6 +352,83 @@ def cmd_discover_only(scope: AssessmentScope, output_dir: Optional[str] = None):
     print(f"\nDiscovery report saved to: {report_path}")
 
 
+
+def cmd_scan_select(interface: Optional[str], timeout: int = 30) -> int:
+    """Run a real passive iw scan and select one observed AP for later use.
+
+    This command deliberately exits after selection. It never invokes the assessment
+    engine, sends frames, creates an AP, or changes the selected network.
+    """
+    if not interface:
+        print("[!] --scan-select requires --interface", file=sys.stderr)
+        return 2
+    if timeout < 1 or timeout > 300:
+        print("[!] timeout must be between 1 and 300 seconds", file=sys.stderr)
+        return 2
+    try:
+        completed = subprocess.run(
+            ["iw", "dev", interface, "scan"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("[!] iw is not installed; no live scan was performed", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print("[!] iw scan timed out; no selection was made", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"[!] iw scan could not start: {exc}", file=sys.stderr)
+        return 1
+
+    issues: List[str] = []
+    access_points = parse_iw_scan(completed.stdout, issues=issues)
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "no diagnostic output"
+        print(f"[!] iw scan failed with exit status {completed.returncode}: {detail}", file=sys.stderr)
+        return 1
+    if not access_points:
+        print("[!] No access points were decoded from the live scan", file=sys.stderr)
+        for issue in issues:
+            print(f"    {issue}", file=sys.stderr)
+        return 1
+
+    print("Passive scan results (no frames were transmitted by this command):")
+    for index, ap in enumerate(access_points, start=1):
+        ssid = ap.get("ssid") or "<hidden>"
+        bssid = ap.get("bssid") or "<unknown>"
+        channel = ap.get("channel") or "?"
+        akm = ",".join(str(value) for value in ap.get("akm_suites", [])) or "unknown"
+        print(f"  {index}: {ssid!r}  {bssid}  channel={channel}  AKM={akm}")
+
+    try:
+        choice = input("Select an AP number (blank to cancel): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[!] Selection cancelled", file=sys.stderr)
+        return 130
+    if not choice:
+        print("[!] Selection cancelled", file=sys.stderr)
+        return 1
+    try:
+        selected = access_points[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("[!] Invalid AP selection", file=sys.stderr)
+        return 2
+
+    print(json.dumps({
+        "selection": "passive_observation",
+        "ssid": selected.get("ssid"),
+        "bssid": selected.get("bssid"),
+        "channel": selected.get("channel"),
+        "akm_suites": selected.get("akm_suites", []),
+        "next_step": "Use the selected identifiers in an explicit authorized scope; no active test was run.",
+    }, indent=2))
+    return 0
+
+
 def main():
     parser = create_parser()
     args = parser.parse_args()
@@ -352,6 +436,9 @@ def main():
     # Setup registry
     registry = get_global_registry()
     load_all_adapters(registry)
+
+    if args.scan_select:
+        raise SystemExit(cmd_scan_select(args.interface, args.timeout))
 
     if args.list_capabilities:
         cmd_list_capabilities(registry, args.interface)

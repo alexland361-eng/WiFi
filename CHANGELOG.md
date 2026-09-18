@@ -1148,3 +1148,5 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 - Performance benchmarks for large-scale assessments
 - Decide whether an undeclared network scope should permit passive discovery of arbitrary hosts
   (see Known limitations above)
+
+- Added a passive `wifi-assess --scan-select -i <interface>` flow that uses the real `iw` scanner, lets the operator select a decoded AP, and exits without active testing.
