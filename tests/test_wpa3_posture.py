@@ -513,3 +513,21 @@ def test_eap_user_file_detector_returns_only_method_posture() -> None:
     assert detect_eap_pwd_user_file('# comments only\n', issues=[]) is None
     # Identity and password text never enter the returned result.
     assert detect_eap_pwd_user_file('"user-with-PWD-in-name" TLS "password"\n') is False
+
+
+def test_control_client_audit_can_explicitly_inspect_eap_user_file(tmp_path) -> None:
+    from wifi_framework.tools.adapters.audit.wpa3 import (
+        HOSTAPD_WPA3_AUDIT_METADATA,
+        HostapdWpa3AuditAdapter,
+    )
+
+    user_file = tmp_path / "eap_users"
+    user_file.write_text('"alice" PWD "do-not-store"\n', encoding="utf-8")
+    adapter = HostapdWpa3AuditAdapter(HOSTAPD_WPA3_AUDIT_METADATA)
+    evidence = adapter.parse_output(
+        "wpa_key_mgmt=WPA-EAP\n", "", 0,
+        {"eap_user_file": str(user_file)}, "wlan0",
+    )[0]
+    assert evidence.parsed_data["eap_pwd_configured"] is True
+    assert "do-not-store" not in repr(evidence.parsed_data)
+    assert adapter.custom_parameter_validation({"eap_user_file": str(user_file)}) == (True, [])

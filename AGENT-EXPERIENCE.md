@@ -1364,7 +1364,7 @@ Six commits, every fix mutation-checked.
 - Added `parsers.rsn`: byte RSN, hexadecimal RSN, RSNX, and `iw` text decoding.
 - Added `parse_iw_scan` and `iw_scan_to_evidences`; added the real, passive `iw_scan` capability/adapter and capability YAML.
 - Added `parsers.wpa_config`; it discards `wpa_passphrase`, `sae_password`, `psk`, and `password` values instead of retaining secrets.
-- Added `docs/WPA3_DRAGONBLOOD.md`, offline SAE capture analysis, and 45 focused tests.
+- Added `docs/WPA3_DRAGONBLOOD.md`, offline SAE capture analysis, and 46 focused tests.
 
 ### Limits kept explicit
 - No dragondrain/commit flood, dragonforce/password partitioning, dragonslayer/EAP-pwd reflection, rogue-AP downgrade, or deauthentication implementation was added. These would turn a posture auditor into a credential-recovery or denial-of-service tool.
@@ -1380,6 +1380,6 @@ Six commits, every fix mutation-checked.
 - Added assessment-engine projection of Dragonblood exposure into ordinary findings. These findings carry `wpa3`/`dragonblood` tags, preserve evidence IDs, and never become verified from a passive observation.
 - Added tests proving RSN posture survives world-model update, transition-mode findings reach the assessment finding store, and control-client evidence cannot retain passphrases.
 - Added real `hostap_cli`/`wpa_cli` configuration/status adapters. The secret sanitizer runs before `Evidence.raw_output`, because parsing a secret away after storing raw output would still leak it.
-- Added an explicit-field-only SAE capture parser and offline tshark adapter. JSON and TSV output now preserve the same decoded BSSID provenance and normalize identities through the canonical MAC rule. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution. Enterprise config recognition remains conservative: EAP-pwd is true only for explicit `eap=PWD` or `eap_pwd_groups`; an external user file is not guessed. The separate user-file detector returns only PWD-method posture and never stores identity/password text.
+- Added an explicit-field-only SAE capture parser and offline tshark adapter. JSON and TSV output now preserve the same decoded BSSID provenance and normalize identities through the canonical MAC rule. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution. Enterprise config recognition remains conservative: EAP-pwd is true only for explicit `eap=PWD` or `eap_pwd_groups`; an external user file is not guessed. The separate user-file detector returns only PWD-method posture and never stores identity/password text. Control-client audits now accept an explicit user-file path and retain only the Boolean posture.
 - Found and fixed a stale-finding path: an unresolved beacon finding now gets refined by later authorized capture/configuration evidence; verified findings are never downgraded.
 - Verification after this continuation: 877 tests passed, coverage 70.39%, Ruff clean, mypy 30 at baseline, and the registry contains 62 capabilities.

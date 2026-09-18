@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Dict, List
 
 from ....core.execution.adapter_base import ToolAdapterBase
@@ -14,7 +15,11 @@ from ....core.models.capability import (
     ToolCapabilityMetadata,
 )
 from ....core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
-from ....parsers.wpa_config import parse_wpa_config, sanitize_wpa_config
+from ....parsers.wpa_config import (
+    detect_eap_pwd_user_file,
+    parse_wpa_config,
+    sanitize_wpa_config,
+)
 
 
 class _Wpa3ControlAuditAdapter(ToolAdapterBase):
@@ -46,6 +51,13 @@ class _Wpa3ControlAuditAdapter(ToolAdapterBase):
             source=f"{self.cli_binary} get_config",
             issues=issues,
         )
+        user_file = parameters.get("eap_user_file")
+        if user_file is not None:
+            try:
+                user_text = Path(user_file).read_text(encoding="utf-8")
+                posture.eap_pwd_configured = detect_eap_pwd_user_file(user_text, issues)
+            except OSError as exc:
+                issues.append(f"EAP user file could not be read: {exc}")
         self.parse_warnings.extend(issues)
         data = asdict(posture)
         # The dataclass contains only posture, not secrets; safe_output is what enters
@@ -66,6 +78,14 @@ class _Wpa3ControlAuditAdapter(ToolAdapterBase):
         ]
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]):
+        user_file = parameters.get("eap_user_file")
+        if user_file is None:
+            return True, []
+        if not isinstance(user_file, str) or not user_file.strip():
+            return False, ["eap_user_file must be a non-empty path"]
+        path = Path(user_file).expanduser()
+        if not path.is_file():
+            return False, [f"EAP user file does not exist: {user_file}"]
         return True, []
 
 
@@ -92,7 +112,7 @@ def _metadata(name: str, display_name: str, binary: str) -> ToolCapabilityMetada
             interface_required=True,
             privileges=[],
         ),
-        inputs=["interface"],
+        inputs=["interface", "optional_eap_user_file"],
         outputs=["wpa3_posture", "sae_groups", "sae_pwe", "pmf_status", "eap_pwd_status"],
         operational_properties=OperationalProperties(
             mode=OperationalMode.CONFIGURATION,
