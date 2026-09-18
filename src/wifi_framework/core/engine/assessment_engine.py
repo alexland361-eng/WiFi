@@ -905,9 +905,30 @@ class AssessmentEngine:
         )
         for exposure in assess_dragonblood_exposure(posture):
             tag = f"wpa3:{exposure.attack}"
-            if any(tag in finding.tags and bssid in finding.affected_assets for finding in self.state.findings):
-                continue
             status = FindingStatus(exposure.status.value)
+            existing = next(
+                (
+                    finding for finding in self.state.findings
+                    if tag in finding.tags and bssid in finding.affected_assets
+                ),
+                None,
+            )
+            if existing is not None:
+                # New capture/configuration evidence may resolve a previous passive
+                # unknown. Do not downgrade an independently verified finding, but do
+                # refresh hypotheses and unresolved findings with the latest posture.
+                if existing.status not in (FindingStatus.VERIFIED, FindingStatus.CONFIRMED):
+                    existing.description = exposure.detail
+                    existing.details = exposure.to_dict()
+                    existing.severity = FindingSeverity(exposure.severity.value)
+                    existing.status = status
+                    existing.confidence = max(
+                        existing.confidence,
+                        0.8 if status is FindingStatus.SUPPORTED else 0.4,
+                    )
+                    for evidence_id in ap.evidence_ids:
+                        existing.add_evidence(evidence_id)
+                continue
             finding = Finding(
                 title=f"WPA3 posture: {exposure.attack}",
                 description=exposure.detail,

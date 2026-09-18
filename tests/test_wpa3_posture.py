@@ -426,3 +426,41 @@ def test_offline_sae_handshake_fills_observed_groups_in_world_model() -> None:
     world = WorldModel()
     world.update(evidence)
     assert world.access_points["00:11:22:33:44:55"].extra["wpa3"]["sae_groups"] == [19]
+
+
+def test_later_sae_capture_refines_an_unresolved_wpa3_finding(tmp_path) -> None:
+    from wifi_framework.core.engine.assessment_engine import AssessmentEngine
+    from wifi_framework.core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
+    from wifi_framework.core.models.scope import AssessmentScope
+    from wifi_framework.core.audit.logger import AuditLogger
+
+    engine = AssessmentEngine(
+        AssessmentScope(authorized_bssids=["00:11:22:33:44:55"]),
+        audit_logger=AuditLogger(log_dir=str(tmp_path / "audit")),
+        artifact_dir=str(tmp_path / "artifacts"),
+    )
+    scan = Evidence.from_tool_output(
+        tool_name="iw", capability="wpa3_posture_scan", evidence_type=EvidenceType.ACCESS_POINT,
+        raw_output="scan", parsed_data={
+            "bssid": "00:11:22:33:44:55", "akm_suites": [8],
+            "mfpc": True, "mfpr": True, "source": "iw scan",
+        }, parameters={}, confidence=ConfidenceLevel.HIGH,
+    )
+    engine.state.world_model.update(scan)
+    engine.update_findings_from_world_model()
+    timing = next(f for f in engine.state.findings if f.title.startswith("WPA3 posture: SAE timing"))
+    assert timing.status.value == "unresolved"
+
+    capture = Evidence(
+        evidence_type=EvidenceType.HANDSHAKE,
+        parsed_data={
+            "bssid": "00:11:22:33:44:55", "sae_groups": [19],
+            "sae_observation_count": 2, "sae_commit_count": 1, "sae_confirm_count": 1,
+        },
+    )
+    engine.state.world_model.update(capture)
+    engine.update_findings_from_world_model()
+    refined = next(f for f in engine.state.findings if f.id == timing.id)
+    assert refined.status.value == "supported"
+    assert refined.details["exposed"] is False
+    assert capture.id in refined.evidence_ids
