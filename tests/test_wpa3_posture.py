@@ -513,6 +513,8 @@ def test_eap_user_file_detector_returns_only_method_posture() -> None:
     assert detect_eap_pwd_user_file('# comments only\n', issues=[]) is None
     # Identity and password text never enter the returned result.
     assert detect_eap_pwd_user_file('"user-with-PWD-in-name" TLS "password"\n') is False
+    assert detect_eap_pwd_user_file('"alice" TLS "PWD"\n') is False
+    assert detect_eap_pwd_user_file('* PWD "secret"\n') is True
 
 
 def test_control_client_audit_can_explicitly_inspect_eap_user_file(tmp_path) -> None:

@@ -48,9 +48,13 @@ def detect_eap_pwd_user_file(text: str, issues: Optional[List[str]] = None) -> O
         if not line:
             continue
         saw_record = True
-        if re.search(r"(?<![A-Za-z0-9_-])PWD(?![A-Za-z0-9_-])", line, re.IGNORECASE):
+        # EAP user records are identity, method, and optional credential. Match PWD
+        # only in the method slot, not in an identity or password value.
+        if re.match(
+            r'^(?:"[^"]*"|\S+)\s+PWD(?:\s|$)', line, re.IGNORECASE
+        ):
             saw_pwd = True
-        elif not line.startswith('"') and issues is not None:
+        elif not line.startswith(('"', "*")) and issues is not None:
             issues.append(f"EAP user line {line_number} has an unrecognized record shape")
     if not saw_record:
         return None
