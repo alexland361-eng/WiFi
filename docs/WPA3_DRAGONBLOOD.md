@@ -87,6 +87,13 @@ configuration; a beacon alone cannot establish that EAP-pwd is enabled or patche
 RADIUS-side adapter is intentionally kept separate from the SAE scan so an enterprise result
 cannot be fabricated from an AKM label alone.
 
+## Connected supplicant status
+
+`wpa_supplicant_wpa3_status` executes `wpa_cli -i <interface> status`. It reads the group and
+PWE selected by an already-established connection when the supplicant exposes them. It does
+not reconnect, transmit SAE frames, or prove what other clients would negotiate. This is a
+read-only observation capability and is distinct from active SAE probing.
+
 ## Offline SAE capture analysis
 
 `sae_capture_analysis` reads an existing authorized capture with:

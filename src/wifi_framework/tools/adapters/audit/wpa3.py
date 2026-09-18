@@ -20,6 +20,7 @@ from ....parsers.wpa_config import (
     parse_wpa_config,
     sanitize_wpa_config,
 )
+from ....parsers.wpa_status import parse_wpa_cli_status
 
 
 class _Wpa3ControlAuditAdapter(ToolAdapterBase):
@@ -99,6 +100,49 @@ class WpaSupplicantWpa3AuditAdapter(_Wpa3ControlAuditAdapter):
     capability_name = "wpa_supplicant_wpa3_audit"
 
 
+class WpaSupplicantStatusAuditAdapter(ToolAdapterBase):
+    """Observe the SAE group selected by an existing wpa_supplicant connection."""
+
+    def build_command(self, interface: str | None, parameters: Dict[str, Any]) -> List[str]:
+        if not interface:
+            raise ValueError("Interface required for wpa_cli status audit")
+        return ["wpa_cli", "-i", interface, "status"]
+
+    def parse_output(
+        self, raw_output: str, error_output: str, exit_code: int,
+        parameters: Dict[str, Any], interface: str | None,
+    ) -> List[Evidence]:
+        combined = raw_output or error_output
+        if exit_code != 0 and not combined.strip():
+            return []
+        issues: List[str] = []
+        posture = parse_wpa_cli_status(combined, interface=interface, issues=issues)
+        self.parse_warnings.extend(issues)
+        data = asdict(posture)
+        data["connection_state"] = next(
+            (line.split("=", 1)[1].strip() for line in combined.splitlines()
+             if line.startswith("wpa_state=")),
+            None,
+        )
+        return [
+            Evidence.from_tool_output(
+                tool_name="wpa_cli",
+                capability="wpa_supplicant_wpa3_status",
+                evidence_type=EvidenceType.AUTHENTICATION,
+                raw_output=combined,
+                parsed_data=data,
+                parameters=parameters,
+                interface=interface,
+                confidence=ConfidenceLevel.HIGH,
+                execution_id=self.execution_id,
+                raw_command=f"wpa_cli -i {interface} status",
+            )
+        ]
+
+    def custom_parameter_validation(self, parameters: Dict[str, Any]):
+        return True, []
+
+
 def _metadata(name: str, display_name: str, binary: str) -> ToolCapabilityMetadata:
     return ToolCapabilityMetadata(
         name=name,
@@ -132,8 +176,28 @@ HOSTAPD_WPA3_AUDIT_METADATA = _metadata(
 WPA_SUPPLICANT_WPA3_AUDIT_METADATA = _metadata(
     "wpa_supplicant_wpa3_audit", "wpa_cli - WPA3 Configuration Audit", "wpa_cli"
 )
+WPA_SUPPLICANT_WPA3_STATUS_METADATA = ToolCapabilityMetadata(
+    name="wpa_supplicant_wpa3_status",
+    display_name="wpa_cli - Connected SAE Status",
+    category=CapabilityCategory.WPA_ASSESSMENT,
+    description="Observe the SAE group selected by an existing wpa_supplicant connection",
+    tool_binary="wpa_cli",
+    version="1.0",
+    requirements=CapabilityRequirements(
+        operating_systems=[OperatingSystem.LINUX], interface_required=True, privileges=[]
+    ),
+    inputs=["interface"],
+    outputs=["bssid", "key_mgmt", "sae_group", "sae_pwe", "connection_state"],
+    operational_properties=OperationalProperties(
+        mode=OperationalMode.PASSIVE_OBSERVATION, persistent=False,
+        estimated_duration_seconds=2, invasive=False, requires_authorization=False,
+    ),
+    failure_conditions=["control_socket_unavailable", "interface_unavailable", "tool_not_found"],
+    tags=["wpa3", "sae", "status", "passive"],
+)
 
 
 def register(registry):
     registry.register(HOSTAPD_WPA3_AUDIT_METADATA, HostapdWpa3AuditAdapter)
     registry.register(WPA_SUPPLICANT_WPA3_AUDIT_METADATA, WpaSupplicantWpa3AuditAdapter)
+    registry.register(WPA_SUPPLICANT_WPA3_STATUS_METADATA, WpaSupplicantStatusAuditAdapter)

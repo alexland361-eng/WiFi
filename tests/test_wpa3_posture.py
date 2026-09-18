@@ -568,3 +568,34 @@ def test_control_client_eap_pwd_posture_reaches_configuration_findings(tmp_path)
     assert findings
     assert any("EAP-pwd" in f.title for f in findings)
     assert all("secret" not in repr(f.to_dict()) for f in findings)
+
+
+def test_wpa_cli_status_reports_selected_sae_group_without_credentials() -> None:
+    from wifi_framework.parsers.wpa_status import parse_wpa_cli_status
+
+    posture = parse_wpa_cli_status(
+        "wpa_state=COMPLETED\nssid=lab\nbssid=aa-bb-cc-dd-ee-ff\n"
+        "key_mgmt=SAE\nsae_group=19\nsae_pwe=1\n",
+        interface="wlan0",
+    )
+    assert posture.bssid == "AA:BB:CC:DD:EE:FF"
+    assert posture.akm_suites == [8]
+    assert posture.sae_groups == [19]
+    assert posture.sae_pwe == 1
+    assert posture.ssid == "lab"
+
+
+def test_wpa_status_adapter_is_read_only() -> None:
+    from wifi_framework.tools.adapters.audit.wpa3 import (
+        WPA_SUPPLICANT_WPA3_STATUS_METADATA,
+        WpaSupplicantStatusAuditAdapter,
+    )
+
+    adapter = WpaSupplicantStatusAuditAdapter(WPA_SUPPLICANT_WPA3_STATUS_METADATA)
+    assert adapter.build_command("wlan0", {}) == ["wpa_cli", "-i", "wlan0", "status"]
+    evidence = adapter.parse_output(
+        "wpa_state=COMPLETED\nbssid=00:11:22:33:44:55\nkey_mgmt=SAE\nsae_group=19\n",
+        "", 0, {}, "wlan0",
+    )[0]
+    assert evidence.parsed_data["sae_groups"] == [19]
+    assert evidence.parsed_data["connection_state"] == "COMPLETED"

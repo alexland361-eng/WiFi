@@ -17,6 +17,15 @@
     interface_required: true
     privileges: []
 
+- name: wpa_supplicant_wpa3_status
+  tool_binary: wpa_cli
+  category: wpa_assessment
+  description: "Observe the SAE group selected by an existing connection"
+  requirements:
+    os: [linux]
+    interface_required: true
+    privileges: []
+
 - name: sae_capture_analysis
   tool_binary: tshark
   category: wpa_assessment
