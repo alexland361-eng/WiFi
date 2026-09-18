@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Assessment re-evaluation updates an existing unresolved WPA3 finding when later capture/configuration evidence resolves it, without downgrading independently verified findings.
 - Offline SAE JSON and TSV extraction now preserve decoded BSSID provenance identically, normalize identities through the canonical MAC rule, and enrich the same AP posture. Explicit tshark Transition Disable fields are also retained; generic payload bytes are not interpreted.
 - `docs/WPA3_DRAGONBLOOD.md` documenting research grounding, evidence limits, remediation, and the explicit non-implementation of credential recovery, commit floods, rogue-AP downgrade, and EAP-pwd reflection tools.
+- Added `docs/WPA3_TOOL_VERIFICATION.md`, separating source-, fixture-, and live-verified command status and recording that the exact tshark field names still require deployment verification.
 - 50 focused WPA3 posture, RSN, `iw scan`, control-client audit, connected-status, offline SAE-capture, Transition Disable, configuration-audit, world-model, and assessment-integration tests.
 
 ### Security

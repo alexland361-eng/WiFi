@@ -1383,3 +1383,8 @@ Six commits, every fix mutation-checked.
 - Added an explicit-field-only SAE capture parser and offline tshark adapter. JSON and TSV output now preserve the same decoded BSSID provenance and normalize identities through the canonical MAC rule. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution. Explicit Transition Disable fields from authorized captures are retained without interpreting generic payload bytes. Enterprise config recognition remains conservative: EAP-pwd is true only for explicit `eap=PWD` or `eap_pwd_groups`; an external user file is not guessed. The separate user-file detector returns only a PWD method-field posture and never stores identity/password text; a PWD token in a password is not misclassified. Control-client audits now accept an explicit user-file path and retain only the Boolean posture. Added a separate read-only wpa_cli status audit for the group selected by an existing connection.
 - Found and fixed a stale-finding path: an unresolved beacon finding now gets refined by later authorized capture/configuration evidence; verified findings are never downgraded.
 - Verification after this continuation: 877 tests passed, coverage 70.39%, Ruff clean, mypy 30 at baseline, and the registry contains 62 capabilities.
+
+
+### Command verification record
+
+- Added `docs/WPA3_TOOL_VERIFICATION.md` after checking the exact control-interface handlers in hostap source and the official iw/TShark documentation. It deliberately marks the tshark field name `wlan.fixed.auth_alg` as not live-verified because tshark is absent locally; `tshark -G fields` is the required deployment check.
