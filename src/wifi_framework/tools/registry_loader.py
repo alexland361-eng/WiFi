@@ -22,7 +22,7 @@ def load_all_adapters(registry: Optional[CapabilityRegistry] = None) -> Capabili
     from .adapters.discovery import airodump, horst, kismet, wash, wavemon
 
     # Capture - includes termshark, mitmproxy, airbase
-    from .adapters.capture import dumpcap, tcpdump, termshark, tshark
+    from .adapters.capture import dumpcap, sae, tcpdump, termshark, tshark
 
     # WPS
     from .adapters.wps import bully, pixiewps, reaver
@@ -66,6 +66,7 @@ def load_all_adapters(registry: Optional[CapabilityRegistry] = None) -> Capabili
         horst,
         wavemon,
         tshark,
+        sae,
         tcpdump,
         dumpcap,
         termshark,

@@ -16,3 +16,12 @@
     os: [linux]
     interface_required: true
     privileges: []
+
+- name: sae_capture_analysis
+  tool_binary: tshark
+  category: wpa_assessment
+  description: "Offline SAE group and authentication analysis from an existing capture"
+  requirements:
+    os: [linux]
+    interface_required: false
+    privileges: []

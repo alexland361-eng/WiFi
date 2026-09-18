@@ -267,6 +267,25 @@ class WorldModel:
                     self.clients[client_mac].associated_bssid = bssid
                 self.access_points[bssid].client_macs.add(client_mac)
 
+        elif etype == EvidenceType.HANDSHAKE and data.get("sae_groups"):
+            # Offline SAE capture evidence can fill the group field that a beacon cannot
+            # provide. It remains observation evidence; no attack result is implied.
+            bssid = data.get("bssid")
+            if bssid:
+                bssid = str(bssid).upper()
+                if bssid not in self.access_points:
+                    self.access_points[bssid] = AccessPoint(bssid=bssid, first_seen=evidence.timestamp)
+                posture = self.access_points[bssid].extra.setdefault("wpa3", {})
+                if isinstance(posture, dict):
+                    posture["sae_groups"] = data["sae_groups"]
+                    posture["sae_observation_count"] = data.get("sae_observation_count")
+                    posture["sae_commit_count"] = data.get("sae_commit_count")
+                    posture["sae_confirm_count"] = data.get("sae_confirm_count")
+                    posture["source"] = "offline SAE capture"
+                self.access_points[bssid].last_seen = evidence.timestamp
+                if evidence.id not in self.access_points[bssid].evidence_ids:
+                    self.access_points[bssid].evidence_ids.append(evidence.id)
+
         elif etype == EvidenceType.CLIENT:
             mac = data.get("client_mac") or data.get("mac") or data.get("client")
             if not mac:

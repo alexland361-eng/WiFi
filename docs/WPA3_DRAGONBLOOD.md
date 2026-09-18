@@ -87,6 +87,21 @@ configuration; a beacon alone cannot establish that EAP-pwd is enabled or patche
 RADIUS-side adapter is intentionally kept separate from the SAE scan so an enterprise result
 cannot be fabricated from an AKM label alone.
 
+## Offline SAE capture analysis
+
+`sae_capture_analysis` reads an existing authorized capture with:
+
+```text
+tshark -r <capture> -T json -Y wlan.fixed.auth_alg == 3
+```
+
+The parser accepts only explicit tshark-decoded SAE authentication/group fields. It records
+observed groups, commit/confirm counts, and BSSID when decoded. It does not infer a group from
+unlabeled payload bytes. When the dissector does not expose a group, the capture still proves
+that SAE authentication frames were observed but leaves `sae_groups` empty. This evidence can
+fill the group field in the world model when the BSSID is known, allowing timing and group
+downgrade posture to be assessed from an existing capture.
+
 ## Control-client audits
 
 Two configuration/status capabilities use the real local control clients:

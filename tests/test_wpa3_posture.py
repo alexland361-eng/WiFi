@@ -353,3 +353,76 @@ def test_control_client_audit_requires_interface() -> None:
     adapter = HostapdWpa3AuditAdapter(HOSTAPD_WPA3_AUDIT_METADATA)
     with pytest.raises(ValueError):
         adapter.build_command(None, {})
+
+
+def test_sae_capture_parser_uses_explicit_tshark_group_fields_only() -> None:
+    import json
+    from wifi_framework.parsers.sae import parse_sae_tshark_json, parse_sae_tshark_fields
+
+    packets = [{"_source": {"layers": {
+        "wlan": {
+            "wlan.fixed.auth_alg": "3",
+            "wlan.fixed.auth_seq": "1",
+            "wlan.sae.group": "19",
+            "wlan.bssid": "00:11:22:33:44:55",
+        }
+    }}}, {"_source": {"layers": {
+        "wlan": {
+            "wlan.fixed.auth_alg": "3",
+            "wlan.fixed.auth_seq": "2",
+            "wlan.sae.group": "19",
+        }
+    }}}]
+    result = parse_sae_tshark_json(json.dumps(packets))
+    assert result[0]["sae_groups"] == [19]
+    assert result[0]["bssid"] == "00:11:22:33:44:55"
+    assert result[0]["sae_commit_count"] == 1
+    assert result[0]["sae_confirm_count"] == 1
+
+    fields = "3\t1\t28\n3\t2\t28\n"
+    result = parse_sae_tshark_fields(
+        fields, ["wlan.fixed.auth_alg", "wlan.fixed.auth_seq", "wlan.sae.group"]
+    )
+    assert result[0]["sae_groups"] == [28]
+
+
+def test_sae_capture_parser_does_not_infer_groups_from_unlabeled_bytes() -> None:
+    import json
+    from wifi_framework.parsers.sae import parse_sae_tshark_json
+
+    issues = []
+    packets = [{"_source": {"layers": {
+        "wlan": {"wlan.fixed.auth_alg": "3", "wlan.fixed.auth_seq": "1", "wlan.fixed.raw": "1300"}
+    }}}]
+    result = parse_sae_tshark_json(json.dumps(packets), issues)
+    assert result[0]["sae_groups"] == []
+    assert result[0]["sae_observation_count"] == 1
+    assert not issues
+
+
+def test_offline_sae_adapter_never_opens_interface() -> None:
+    from wifi_framework.tools.adapters.capture.sae import METADATA, SaeCaptureAnalysisAdapter
+
+    adapter = SaeCaptureAnalysisAdapter(METADATA)
+    assert adapter.build_command(None, {"read_file": "/tmp/authorized.pcapng"}) == [
+        "tshark", "-r", "/tmp/authorized.pcapng", "-T", "json",
+        "-Y", "wlan.fixed.auth_alg == 3",
+    ]
+    with pytest.raises(ValueError):
+        adapter.build_command("wlan0", {"read_file": "-i"})
+
+
+def test_offline_sae_handshake_fills_observed_groups_in_world_model() -> None:
+    from wifi_framework.core.models.evidence import Evidence, EvidenceType
+    from wifi_framework.core.models.world_model import WorldModel
+
+    evidence = Evidence(
+        evidence_type=EvidenceType.HANDSHAKE,
+        parsed_data={
+            "bssid": "00:11:22:33:44:55", "sae_groups": [19],
+            "sae_observation_count": 2, "sae_commit_count": 1, "sae_confirm_count": 1,
+        },
+    )
+    world = WorldModel()
+    world.update(evidence)
+    assert world.access_points["00:11:22:33:44:55"].extra["wpa3"]["sae_groups"] == [19]
