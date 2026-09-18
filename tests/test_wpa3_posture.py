@@ -18,7 +18,11 @@ from wifi_framework.core.models.wpa3 import (
 )
 from wifi_framework.parsers.iw import parse_iw_scan
 from wifi_framework.parsers.rsn import RsnParseError, parse_iw_rsn_lines, parse_rsn_ie, parse_rsn_ie_hex, parse_rsnx_ie
-from wifi_framework.parsers.wpa_config import parse_wpa_config, sanitize_wpa_config
+from wifi_framework.parsers.wpa_config import (
+    detect_eap_pwd_user_file,
+    parse_wpa_config,
+    sanitize_wpa_config,
+)
 
 
 def suite(t: int) -> bytes:
@@ -499,3 +503,13 @@ def test_wpa_config_recognizes_explicit_eap_pwd_only() -> None:
     assert explicit.eap_pwd_configured is True
     external = parse_wpa_config("wpa_key_mgmt=WPA-EAP\neap_user_file=/etc/hostapd/hostapd.eap_users\n")
     assert external.eap_pwd_configured is None
+
+
+def test_eap_user_file_detector_returns_only_method_posture() -> None:
+    issues = []
+    assert detect_eap_pwd_user_file('"alice" PWD "secret-value"\n', issues) is True
+    assert issues == []
+    assert detect_eap_pwd_user_file('"alice" TLS\n', issues=[]) is False
+    assert detect_eap_pwd_user_file('# comments only\n', issues=[]) is None
+    # Identity and password text never enter the returned result.
+    assert detect_eap_pwd_user_file('"user-with-PWD-in-name" TLS "password"\n') is False

@@ -34,6 +34,29 @@ def sanitize_wpa_config(text: str) -> str:
     return "\n".join(safe_lines)
 
 
+def detect_eap_pwd_user_file(text: str, issues: Optional[List[str]] = None) -> Optional[bool]:
+    """Detect an explicit PWD method in an EAP user file without retaining secrets.
+
+    Hostapd EAP user files contain identities and often password material. This function
+    returns only whether a non-comment record explicitly names the PWD method. Empty or
+    comment-only input remains unknown; a parsed file with no PWD method returns ``False``.
+    """
+    saw_record = False
+    saw_pwd = False
+    for line_number, raw in enumerate(text.splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        saw_record = True
+        if re.search(r"(?<![A-Za-z0-9_-])PWD(?![A-Za-z0-9_-])", line, re.IGNORECASE):
+            saw_pwd = True
+        elif not line.startswith('"') and issues is not None:
+            issues.append(f"EAP user line {line_number} has an unrecognized record shape")
+    if not saw_record:
+        return None
+    return saw_pwd
+
+
 def parse_wpa_config(
     text: str,
     *,
