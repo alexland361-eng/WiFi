@@ -1057,11 +1057,13 @@ operator or the World Model saw an empty result where the truth was a broken one
 
 Fixing those six, then running the project's own declared lint configuration for the first
 time, found a seventh that no amount of reading had surfaced: a mixed IPv4/IPv6 authorized
-scope crashed the network scope check. Measuring coverage afterwards found an eighth, in the
-one module with no tests at all: the documented `--config` path never reached the
+scope crashed the network scope check. Measuring coverage afterwards found an eighth, in one
+of the two modules with no tests at all: the documented `--config` path never reached the
 authorization checks, so the framework refused invasive actions against assets the operator
 had explicitly authorized. It is the most consequential defect of the pass and it was found
-by a number, not by reading.
+by a number, not by reading. Testing it led to the other uncovered module and a ninth: three
+parsers decided for themselves what a MAC address is, so `parse_wash` recorded BSSIDs the
+framework's own authority rejects and dropped ones it accepts.
 
 Test count 650 -> 734. Ruff findings in the gated set 722 -> 0. Mypy findings 194 -> 34.
 Six commits, every fix mutation-checked.
@@ -1173,6 +1175,50 @@ Six commits, every fix mutation-checked.
   reading - it needs a test that runs the whole path. That the module had no tests was not an
   oversight I could see from inside it; 772 tests elsewhere made the suite feel thorough.
 
+- **Unifying two rules can import a rule that is right in one context and wrong in another.**
+  Having found that the parsers were not asking `normalize_mac`, the obvious fix was to ask it
+  everywhere - and in `extract_macs` that meant accepting the bare twelve-hex-digit form the
+  canonical rule accepts. Run against a timestamp, it returned `20:24:01:01:12:00`: an access
+  point invented out of `202401011200`. The canonical rule accepts the bare form because an
+  operator writing a scope entry means an address; extracting from free text has no such
+  evidence, and tool output is full of twelve-digit numbers. The fix would have been worse
+  than the defect. **Lesson: a shared rule carries the assumptions of the call site that
+  motivated it. Before delegating, ask what evidence the *new* call site has that the old one
+  did not - and test the fix against the failure modes it creates, not only the ones it
+  removes.** I caught this by running the new code on inputs nobody had asked about, which is
+  the same move that found the defect.
+  The two sites still differ - `parse_wash` accepts the bare form, `extract_macs` refuses it -
+  and the reason is written at both, because a reader who sees only one of them will "fix" the
+  inconsistency.
+
+- **A filter that decides what to report must be tested against the case that motivated it.**
+  The fallback branch reports a malformed field but not wash's banner text, so it needed a
+  test for "does this look like an address". My first version required a leading hex digit and
+  a hex-only character class - which excluded `AA:BB:CC:DD:EE:FFGG`, the trailing-garbage case
+  that was the entire reason the report existed. It failed silently, in the direction that
+  matters: the most malformed input was the one dropped without a word. Only printing the
+  actual issue list, rather than assuming it, showed the gap. **Lesson: a heuristic gate on
+  reporting needs its own test corpus drawn from the defects it was written for, or it will
+  quietly exempt exactly them.**
+
+- **Read what the caller actually feeds the parser before deciding which inputs are plausible.**
+  I had reasoned that a bare twelve-digit token in wash output was hypothetical. Then I read
+  `WashAdapter.parse_output`: it hands the parser `raw_output + "\n" + error_output` as one
+  document, and `parse_wash` scans for the header anywhere in it - so once stdout has produced
+  a header, every line of stderr is parsed as a row. wash's stderr carries timestamps and
+  counters. The hypothetical was one adapter method away from being the common case, and it
+  changed the design of the fallback branch. **Lesson: "unrealistic input" is a claim about the
+  caller, so check the caller. Parsers are usually invoked with more than the tool's stdout.**
+
+- **Unreachable defensive code is debt, not a defect, and the difference is whether a test can
+  tell.** `parse_wash` wraps `int(channel)` and `int(dbm)` in `except ValueError` handlers that
+  cannot run, because the row pattern already constrains both groups to digits. Removing them
+  would be a behaviour-preserving refactor that no test could verify - the tests cannot reach
+  them either way - so they stay, and the changelog records why the file sits at 94% rather
+  than 100%. **Lesson: when a coverage gap is unreachable code, say so where the next reader
+  will look. An unexplained 4 missing lines invites someone to write a test that cannot
+  exist.**
+
 - **A fix earlier in this pass made that worse, and the same fix cured it.** `validate()` used
   to re-parse `authorized_networks` on every call, so it caught a malformed config entry even
   though the compiled matchers were stale. Rewriting it to report the entries dropped at
@@ -1257,16 +1303,17 @@ Six commits, every fix mutation-checked.
 
 ### Success Metrics
 
-- 791 tests passing with scapy, 788 plus 3 skipped without (650 at 0.5.1). CI green on all
+- 837 tests passing with scapy, 783 plus 3 skipped without (650 at 0.5.1). CI green on all
   five jobs, including the mac80211_hwsim wireless job (12/12 capture and injection checks
-  against real radios). Coverage 68.67% with scapy and 68.32% without, now gated at 68;
-  `cli/main.py` 0% -> 55%.
+  against real radios). Coverage 69.13% with scapy and 68.78% without, gated at 68; the two
+  modules that had none now have tests - `cli/main.py` 0% -> 55%, `parsers/base.py` 0% -> 100%.
 - Ruff: 722 findings -> 0 in the gated set, and CI now runs it on every push.
 - Mypy: 194 findings -> 33, with the residue gated against growth by `.mypy-baseline`.
-- Eight defects fixed: six from the silent-failure audit, one from the type checker, one from
+- Nine defects fixed: six from the silent-failure audit, one from the type checker, two from
   measuring coverage. Each mutation-checked; the airodump batch alone fails 13 tests when the
   dead loop is restored, breaking the channel-gate coupling fails 12 including an end-to-end
-  scope case, and restoring the construct-then-mutate scope loading fails 4.
+  scope case, restoring the construct-then-mutate scope loading fails 4, and the parser
+  identity batch was reverted in four separate parts failing 4, 10, 14 and 1 tests.
 - `scripts/exercise_framework.py` unchanged at 61/69 with 11 skipped across every commit in
   the pass - the 8 failures and 11 skips are the sandbox having no wireless hardware and none
   of the 52 declared tools installed, each recorded with its reason.
@@ -1278,12 +1325,13 @@ Six commits, every fix mutation-checked.
   judgement work; the ratchet stops the number rising.
 - **`E501` and `C901` are deferred, not fixed.** 574 over-length lines and 45 functions over
   the complexity budget, both recorded with their counts in `pyproject.toml`.
-- **Coverage is gated at 68% against a measured 68.67%**, so the effective floor is 67.5% -
-  it catches erosion rather than a handful of statements. The threshold is a round number
-  below the measurement because of the pytest-cov exit-code/message disagreement described in
-  Challenges; a tighter gate would need `--cov-precision` set to match. The largest remaining
-  gap is the
-  tool adapters: 38% aggregate over 2271 statements, median 37% per file, 31 of 39 below 50%.
+- **Coverage is gated at 68% against a measured 69.13%**, so the effective floor is 67.5% -
+  it catches erosion rather than a handful of statements. The threshold sits below the
+  measurement for two reasons, both in Challenges: the pytest-cov exit-code/message
+  disagreement, and the no-scapy total of 68.78%, which is under 69 and would print a red
+  failure while passing. All four combinations were measured after this pass moved the number;
+  a tighter gate needs `--cov-precision` set to match. The largest remaining gap is the tool
+  adapters: 38% aggregate over 2274 statements, median 37% per file, 30 of 39 below 50%.
   Their execution paths cannot run in a sandbox with none of the 52 declared tools installed,
   so the number will not move much without hardware.
 - **The airodump screen-output fallback cannot attribute probe requests or associations.**

@@ -823,10 +823,13 @@ instead of a broken one.
 The gate then found a seventh defect that no amount of reading had surfaced: a mixed
 IPv4/IPv6 authorized scope crashed the network scope check.
 
-Measuring coverage afterwards found an eighth, in the one module with no tests at all - and
-it was the most consequential of the eight: the documented `--config` path never reached the
-authorization checks, so the framework refused invasive actions against assets the operator
-had explicitly authorized.
+Measuring coverage afterwards found an eighth, in one of the two modules with no coverage at
+all - and it was the most consequential of the eight: the documented `--config` path never
+reached the authorization checks, so the framework refused invasive actions against assets
+the operator had explicitly authorized. Testing it led to the other uncovered module and a
+ninth: the parsers that recognize a MAC address were not asking the framework's one authority
+on the subject, so `parse_wash` recorded BSSIDs that authority rejects and dropped ones it
+accepts.
 
 Every fix is mutation-checked - reverted in place, its tests confirmed to fail, restored.
 
@@ -906,6 +909,32 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   granted. The same construction-order fix also restored `validate()`'s visibility: rewritten
   earlier in this pass to report entries dropped *at construction*, it had become blind to
   anything added afterwards.
+- **Three parsers decided for themselves what a MAC address is** - the ninth defect, found
+  by writing tests for the eighth. `utils/validation.normalize_mac` is the framework's one
+  answer to that question, and it earned the role the hard way: an earlier version stripped
+  non-hex characters, so `AABBCCDDEEFFGG` became `AA:BB:CC:DD:EE:FF` - a *different* address -
+  and an operator's scope allowlist quietly authorized a network nobody had named.
+
+  `parse_wash` took the 17 hex-or-colon characters its row pattern captured as an address
+  unchanged, so `:::::::::::::::::` and `AABBCCDDEEFF00112` were recorded as BSSIDs; its
+  fallback branch used an unanchored `re.match`, so `AA:BB:CC:DD:EE:FFGG` was recorded with
+  the trailing garbage attached. A BSSID decides what may be attacked, and an identifier the
+  scope rule rejects can never match an authorized entry - so those rows became access points
+  in the world model that no authorization could ever cover, and they said so nowhere. The
+  same fallback was colon-only, so the dash form, which the canonical rule *accepts*, was
+  dropped without a word: an AP wash really did report, missing from the results. Both
+  branches now normalize, and what they refuse is reported through `parse_warnings` - the
+  channel the nmap and tshark adapters already had, and which wash was the only parser left
+  out of. Banner text and stderr are still not reported, so the list stays readable.
+
+  `parsers/base.py` kept its own regexes. They accepted mixed separators
+  (`AA:BB-CC:DD-EE:FF`), extracted `00:11:22:33:44:55` from an eight-group run that is not an
+  address, and returned both `1.2.3.4` and `5.6.7.8` from `1.2.3.4.5.6.7.8` plus
+  `999.999.999.999`, because `\d{1,3}` has the right shape and the wrong range. Nothing in
+  production calls these helpers, so this was a trap rather than an active defect - but they
+  are the obvious place to reach for when a tool's output format is unknown, which is exactly
+  when a hand-rolled regex diverges from the rule the rest of the framework uses. They now
+  locate candidates and let `normalize_mac` and `validate_ip` decide.
 - **A malformed channel or signal was dropped with no trace in the world model**
   (carried forward as a known limitation from 0.5.1). `AccessPoint.update_from_evidence`
   and `WirelessClient.update_from_evidence` each caught `(ValueError, TypeError)` and
@@ -992,17 +1021,31 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   refusal, and `main()`'s dispatch, including that running with no scope warns the operator
   rather than silently taking the widest reading.
 - **Coverage gated at its measured baseline** (`--cov-fail-under=68` in the CI coverage
-  step). The total is 68.67% with scapy, which this job installs, and 68.32% without. The
+  step). The total is 69.13% with scapy, which this job installs, and 68.78% without. The
   threshold is 68 rather than 69 because of a disagreement inside pytest-cov, recorded in the
   workflow comment: the exit code compares `round(total, precision=0)` against the threshold
-  while the terminal message compares the raw total, so at 69 the run prints a red "FAIL
-  Required test coverage of 69% not reached. Total coverage: 68.67%" *and* exits 0. A gate
-  that reports failure while passing is worse than no gate - it teaches an operator to
-  distrust red text in the one place designed to produce it. 68 is the highest threshold at
-  which both comparisons agree in both environments, so the effective floor is 67.5%: enough
-  to catch a module losing its tests (`cli/main.py` alone is 184 statements, ~2%), not enough
-  to catch a handful. All three thresholds were run to confirm the behaviour rather than
-  inferred from the source: 68 passes green, 69 passes red, 70 fails red.
+  while the terminal message compares the raw total. A threshold sitting between the two
+  environments' totals therefore prints a red "FAIL Required test coverage of 69% not reached.
+  Total coverage: 68.78%" *and* exits 0 in the lower one - a gate that reports failure while
+  passing, which is worse than no gate, because it teaches an operator to distrust red text in
+  the one place designed to produce it. 68 is the highest threshold at which both comparisons
+  agree in both environments, so the effective floor is 67.5%: enough to catch a module losing
+  its tests (`cli/main.py` alone is 184 statements, ~2%), not enough to catch a handful.
+  Measured rather than inferred, in all four combinations - with scapy 68 green and 69 green,
+  without scapy 68 green and 69 red - and re-measured when the parser tests moved the total,
+  because a threshold chosen against one baseline can drift out of agreement with the next.
+- **46 parser-identity tests** (`tests/test_parser_identity.py`), taking `parsers/base.py`
+  from 0% to 100% and `parsers/wash.py` to 94%. The invariant they assert is that every
+  address a parser emits is a *fixed point* of `normalize_mac` - re-normalizing it changes
+  nothing, because it is already in the one canonical form - which is what makes a parsed
+  address and an authorized address meet. One test carries that end to end: a dash-form row
+  wash reports, parsed, matched against a scope entry the operator wrote, invasive action
+  allowed.
+- **`wash` joined the `parse_warnings` channel** (`parse_wash` and `wash_to_evidences` take an
+  optional `issues` list; the adapter forwards it), following the nmap and tshark convention.
+  Reports distinguish "not a MAC address" from "a MAC address only in bare form, which this
+  line does not establish", because those send an operator looking in different directions -
+  one at a corrupt capture, one at a tool emitting a format the parser did not expect.
 - **`cli.main.SCOPE_CONFIG_KEYS`**, the recognized `--config` keys, so an unrecognized one
   can be reported.
 - **`utils.validation.integral_int(value)`** - a whole number or `None`, refusing rather
@@ -1040,12 +1083,19 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
   means refactoring 45 functions, and a behaviour-preserving refactor of that size is exactly
   where regressions hide; each needs its own change with its own tests.
 
+- **`parse_wash`'s two `except ValueError` handlers around `int(channel)` and `int(dbm)` are
+  unreachable**: the row pattern already constrains both groups to digits, so `int()` cannot
+  fail. Left in place deliberately - they are insurance if that pattern is ever loosened, and
+  no test can distinguish them from their absence, which is what makes them unfixable debt
+  rather than a defect. Recorded here so the 4 uncovered lines in `parsers/wash.py` are not
+  mistaken for a gap someone forgot to fill.
+
 ### Tests
 
-- 791 passing with scapy installed, 788 plus 3 skipped without. Up from 650 at 0.5.1.
-  Total statement coverage 68.67% with scapy (9413 statements, 2949 missed), 68.32% without
-  (2982 missed) - reported by coverage.py as 69% and 68% respectively, which is why the gate
-  is set at 68.
+- 837 passing with scapy installed, 783 plus 3 skipped without. Up from 650 at 0.5.1.
+  Total statement coverage 69.13% with scapy (9440 statements, 2914 missed) and 68.78%
+  without (2947 missed). Both modules that had no coverage at the start of the pass now have
+  tests: `cli/main.py` at 55% and `parsers/base.py` at 100%.
   CI green on all five jobs: unit tests on py3.10/3.11/3.12, the new lint and type gate, and
   the mac80211_hwsim wireless job (12/12 capture and injection checks against real radios).
 - `scripts/exercise_framework.py` reports 61/69 with 11 skipped, unchanged - the 8 failures
@@ -1054,10 +1104,12 @@ Every fix is mutation-checked - reverted in place, its tests confirmed to fail, 
 - New tests: 16 for parse-problem reporting, 17 for storage permissions, 18 for malformed
   scope entries and `validate()`, 26 for the channel scope-gate coupling, 18 for airodump
   screen output and CSV failures, 14 for declared-input enforcement, 6 for mixed-family
-  scope, 11 for unreadable world-model values, 27 for `integral_int`, 19 for the CLI. Each
-  batch mutation-checked - restoring the three silent `except: pass` handlers fails 9 tests,
-  and restoring the construct-then-mutate scope loading fails 4, including the config
-  regression test.
+  scope, 11 for unreadable world-model values, 27 for `integral_int`, 19 for the CLI, 46 for
+  parser identity. Each batch mutation-checked - restoring the three silent `except: pass`
+  handlers fails 9 tests, restoring the construct-then-mutate scope loading fails 4 including
+  the config regression test, and the parser batch was checked by reverting each of its four
+  parts separately: the unvalidated row field fails 4 tests, the unanchored fallback 10, the
+  old `base.py` regexes 14, and removing the adapter's `parse_warnings` wiring 1.
 - The channel scope gate skips a channel it cannot coerce to `int()`, with a comment saying
   parameter validation reports it. That is correct today - both sides do the identical
   conversion catching the identical exceptions - but nothing pinned it, and if parameter

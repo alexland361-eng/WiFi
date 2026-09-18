@@ -50,7 +50,17 @@ class WashAdapter(ToolAdapterBase):
         if exit_code != 0 and not combined.strip():
             return []
 
-        return wash_to_evidences(combined, interface=interface, execution_id=self.execution_id)
+        # Same wiring as the nmap and tshark adapters: the parser reports what it could not
+        # use, and those reports travel on ExecutionResult.parse_warnings to the evidence
+        # engine and the audit trail. Without this a BSSID the parser rejected - a value the
+        # canonical MAC rule refuses, so one that could never match an authorized scope
+        # entry - would vanish with no trace of why.
+        issues: List[str] = []
+        evidences = wash_to_evidences(
+            combined, interface=interface, execution_id=self.execution_id, issues=issues
+        )
+        self.parse_warnings.extend(issues)
+        return evidences
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]):
         errors = []
