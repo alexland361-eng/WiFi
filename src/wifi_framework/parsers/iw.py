@@ -9,6 +9,8 @@ import re
 from typing import Any, Dict, List, Optional
 
 from ..core.models.evidence import ConfidenceLevel, Evidence, EvidenceType
+from .rsn import parse_iw_rsn_lines
+from ..utils.validation import normalize_mac
 
 
 def parse_iw_dev(output: str) -> List[Dict[str, Any]]:
@@ -90,13 +92,104 @@ def parse_iw_dev(output: str) -> List[Dict[str, Any]]:
     return interfaces
 
 
+def parse_iw_scan(output: str, issues: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Parse ``iw dev <interface> scan`` BSS blocks.
+
+    ``iw`` emits one ``BSS <mac>`` block per observed AP. The RSN/RSNX sub-blocks are
+    delegated to :func:`parse_iw_rsn_lines`; absent fields remain absent rather than being
+    invented. A scan is passive observation, so the returned posture deliberately does not
+    claim SAE groups, ``sae_pwe``, implementation version, or Transition Disable status.
+    """
+    def note(message: str) -> None:
+        if issues is not None:
+            issues.append(message)
+
+    blocks: List[List[str]] = []
+    current: List[str] = []
+    for line in output.splitlines():
+        if re.match(r"^BSS\s+[^\s(]+", line):
+            if current:
+                blocks.append(current)
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    results: List[Dict[str, Any]] = []
+    for block in blocks:
+        match = re.match(r"^BSS\s+([^\s(]+)", block[0])
+        if not match:
+            note("iw scan contained a BSS block without a BSSID")
+            continue
+        bssid = normalize_mac(match.group(1))
+        if bssid is None:
+            note(f"iw scan refused invalid BSSID {match.group(1)!r}")
+            continue
+        data: Dict[str, Any] = {
+            "bssid": bssid,
+            "source": "iw scan",
+        }
+        for line in block[1:]:
+            stripped = line.strip()
+            if stripped.startswith("SSID:"):
+                data["ssid"] = stripped.split(":", 1)[1].strip()
+                data["is_hidden"] = data["ssid"] == ""
+            elif stripped.startswith("freq:"):
+                value = re.search(r"freq:\s*(\d+)", stripped)
+                if value:
+                    data["frequency"] = int(value.group(1))
+            elif stripped.startswith("signal:"):
+                value = re.search(r"signal:\s*(-?\d+(?:\.\d+)?)", stripped)
+                if value:
+                    data["signal"] = float(value.group(1))
+            elif stripped.startswith("DS Parameter set:"):
+                value = re.search(r"channel\s+(\d+)", stripped)
+                if value:
+                    data["channel"] = int(value.group(1))
+        rsn = parse_iw_rsn_lines(block)
+        data.update({key: value for key, value in rsn.items() if key != "raw_rsn_lines"})
+        if rsn["raw_rsn_lines"]:
+            data["raw_rsn_lines"] = rsn["raw_rsn_lines"]
+        results.append(data)
+    if not blocks:
+        note("iw scan output contained no BSS blocks")
+    return results
+
+
+def iw_scan_to_evidences(
+    output: str,
+    interface: Optional[str] = None,
+    execution_id: Optional[str] = None,
+    issues: Optional[List[str]] = None,
+) -> List[Evidence]:
+    """Convert passive ``iw scan`` results to access-point evidence."""
+    evidences: List[Evidence] = []
+    for ap in parse_iw_scan(output, issues=issues):
+        evidences.append(
+            Evidence.from_tool_output(
+                tool_name="iw",
+                capability="wpa3_posture_scan",
+                evidence_type=EvidenceType.ACCESS_POINT,
+                raw_output=output,
+                parsed_data=ap,
+                parameters={"interface": interface} if interface else {},
+                interface=interface,
+                confidence=ConfidenceLevel.HIGH,
+                execution_id=execution_id,
+                raw_command=f"iw dev {interface} scan" if interface else "iw scan",
+            )
+        )
+    return evidences
+
+
 def parse_iw_list(output: str) -> Dict[str, Any]:
     """
     Parse `iw list` output for capabilities.
 
     Looks for Supported interface modes, monitor, etc.
     """
-    capabilities = {
+    capabilities: Dict[str, Any] = {
         "supports_monitor": False,
         "supports_injection": False,  # iw list doesn't directly show injection, but we can infer
         "bands": [],
@@ -134,7 +227,7 @@ def parse_iw_list(output: str) -> Dict[str, Any]:
 
 def parse_iw_link(output: str) -> Dict[str, Any]:
     """Parse `iw dev <iface> link` output."""
-    result = {}
+    result: Dict[str, Any] = {}
     for line in output.splitlines():
         stripped = line.strip()
         if "SSID:" in stripped:

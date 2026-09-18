@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- WPA3/SAE posture foundation based on the Dragonblood research: authoritative AKM, RSN/RSNX, PMF, SAE-group, PWE, and hostapd/wpa_supplicant version models in `core.models.wpa3`.
+- Pure RSN/RSNX byte and `iw` text decoders. RSN parsing distinguishes MFPR bit 6 from MFPC bit 7, rejects unknown OUIs as known AKMs, and leaves absent fields unknown.
+- `iw_scan` passive capability and `parse_iw_scan`, with real `iw dev <interface> scan` execution and access-point evidence. Transition mode, H2E advertisement, PMF posture, and malformed BSSID reporting are wired into evidence.
+- WPA configuration audit parser for `sae_groups`, `sae_pwe`, PMF, anti-clogging threshold, Transition Disable, and AKM settings. Password and SAE secret values are never retained.
+- `docs/WPA3_DRAGONBLOOD.md` documenting research grounding, evidence limits, remediation, and the explicit non-implementation of credential recovery, commit floods, rogue-AP downgrade, and EAP-pwd reflection tools.
+- 31 focused WPA3 posture, RSN, `iw scan`, and configuration-audit tests.
+
+### Security
+- Passive observations never invent SAE groups, PWE mode, implementation version, or Transition Disable status. Unsupported active attack claims remain unresolved rather than being promoted to verified findings.
+
 ## [0.1.0] - 2026-09-16
 
 ### Added

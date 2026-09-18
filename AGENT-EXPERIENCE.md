@@ -1345,3 +1345,31 @@ Six commits, every fix mutation-checked.
   redacted, so a report leaving the machine carries any recovered passphrase with it. The two
   `except (ValueError, TypeError): pass` handlers in `AccessPoint.update_from_evidence` listed
   there are now fixed, along with the matching one in `WirelessClient`.
+
+## Session: 2026-09-18 - WPA3 Dragonblood posture foundation
+
+### Context
+- Requested to understand the Dragonblood WPA3/SAE research and implement corresponding tools while preserving the framework's real-execution, evidence, authorization, and verification rules.
+- The supplied PDF host was unreachable from the sandbox. I did not claim to have read it. I used the authors' summary, CERT/CC VU#871675, Debian DSA-4430-1, NVD, and hostap's source retrieved through the GitHub API.
+
+### Findings and decisions
+- Hostap's `dragonfly_suitable_group()` is the authoritative suitability rule: SAE groups 19, 20, 21 and FFC groups 15-18. Its `dragonfly_min_pwe_loop_iter()` confirms the 40-iteration treatment for MODP 22/23/24 and the one-iteration treatment for groups 1, 2, 5, 14-18.
+- Hostap's OpenSSL mapping resolves the easy-to-misremember group table: 19=P-256, 20=P-384, 21=P-521, 25=P-192, 26=secp224r1, 27-30=Brainpool P224/P256/P384/P512. Group 24 is a 2048-bit MODP group with a 256-bit prime-order subgroup; it is not 4096-bit. A test pins this correction.
+- `WPA_CAPABILITY_MFPR` is bit 6 and `WPA_CAPABILITY_MFPC` is bit 7. Several secondary pages reverse them; hostap's header and the observed 0x00a8/0x00e8 PMF values settle it. The implementation documents the source and the arithmetic rather than copying the secondary error.
+- Transition Disable is not an RSN capability bit. Hostap defines it as WFA key data OUI/type `50-6f-9a:20` inside the four-way handshake. It cannot be claimed from a beacon.
+- The implementation reports Dragonblood preconditions as supported or unresolved, never verified. Verifying timing/cache leaks, downgrade, or resource exhaustion would be the attack itself.
+
+### Implementation
+- Added `core.models.wpa3`: AKM selectors, RSN/RSNX bits, SAE groups, PWE classification, version-fix model, posture, and evidence-aware Dragonblood exposure assessment.
+- Added `parsers.rsn`: byte RSN, hexadecimal RSN, RSNX, and `iw` text decoding.
+- Added `parse_iw_scan` and `iw_scan_to_evidences`; added the real, passive `iw_scan` capability/adapter and capability YAML.
+- Added `parsers.wpa_config`; it discards `wpa_passphrase`, `sae_password`, `psk`, and `password` values instead of retaining secrets.
+- Added `docs/WPA3_DRAGONBLOOD.md` and 31 focused tests.
+
+### Limits kept explicit
+- No dragondrain/commit flood, dragonforce/password partitioning, dragonslayer/EAP-pwd reflection, rogue-AP downgrade, or deauthentication implementation was added. These would turn a posture auditor into a credential-recovery or denial-of-service tool.
+- No active SAE negotiation was added. It is the next design decision if the project needs a separately reviewed, explicitly authorized capability; the passive scan cannot learn an AP's accepted SAE groups because those are negotiated after the beacon.
+- Enterprise/EAP-pwd is recognized at the profile level, but a RADIUS-side audit is not fabricated from a beacon AKM label. It remains a separate adapter milestone.
+
+### Verification
+- 31 WPA3 tests pass; Ruff passes for the changed WPA3 files; targeted mypy reports no issues for the model, parsers, and iw adapter. Full suite: 868 passed with 70.04% coverage; Ruff and the type baseline are green. The coverage gate remains 68%.

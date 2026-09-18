@@ -15,7 +15,7 @@ from ....core.models.capability import (
     ToolCapabilityMetadata,
 )
 from ....core.models.evidence import Evidence
-from ....parsers.iw import iw_dev_to_evidences, parse_iw_list
+from ....parsers.iw import iw_dev_to_evidences, iw_scan_to_evidences, parse_iw_list
 
 
 class IwDevAdapter(ToolAdapterBase):
@@ -37,6 +37,27 @@ class IwDevAdapter(ToolAdapterBase):
             return []
         # iw dev output
         return iw_dev_to_evidences(raw_output, interface=interface, execution_id=self.execution_id)
+
+    def custom_parameter_validation(self, parameters: Dict[str, Any]):
+        return True, []
+
+
+class IwScanAdapter(ToolAdapterBase):
+    """Adapter for ``iw dev <interface> scan`` - passive WPA3 posture discovery."""
+
+    def build_command(self, interface: str | None, parameters: Dict[str, Any]) -> List[str]:
+        if not interface:
+            raise ValueError("Interface required for iw scan")
+        return ["iw", "dev", interface, "scan"]
+
+    def parse_output(
+        self, raw_output: str, error_output: str, exit_code: int, parameters: Dict[str, Any], interface: str | None
+    ) -> List[Evidence]:
+        if exit_code != 0:
+            return []
+        return iw_scan_to_evidences(
+            raw_output, interface=interface, execution_id=self.execution_id
+        )
 
     def custom_parameter_validation(self, parameters: Dict[str, Any]):
         return True, []
@@ -77,6 +98,31 @@ class IwListAdapter(ToolAdapterBase):
 
 
 # Metadata definitions
+IW_SCAN_METADATA = ToolCapabilityMetadata(
+    name="iw_scan",
+    display_name="iw scan - WPA3/RSN Posture Discovery",
+    category=CapabilityCategory.WIRELESS_INTERFACE,
+    description="Passively scan nearby BSSs and decode RSN/RSNX fields relevant to WPA3 posture",
+    tool_binary="iw",
+    version="1.0",
+    requirements=CapabilityRequirements(
+        operating_systems=[OperatingSystem.LINUX],
+        interface_required=True,
+        privileges=[],
+    ),
+    inputs=["interface"],
+    outputs=["access_points", "rsn_akm_suites", "pmf_status", "sae_h2e_advertisement"],
+    operational_properties=OperationalProperties(
+        mode=OperationalMode.PASSIVE_OBSERVATION,
+        persistent=False,
+        estimated_duration_seconds=10,
+        invasive=False,
+        requires_authorization=False,
+    ),
+    failure_conditions=["interface_unavailable", "interface_not_ready", "tool_not_found"],
+    tags=["wifi", "wpa3", "sae", "rsn", "passive"],
+)
+
 IW_DEV_METADATA = ToolCapabilityMetadata(
     name="iw_dev",
     display_name="iw dev - Wireless Interface Discovery",
@@ -134,4 +180,5 @@ ADAPTER_CLASS = IwDevAdapter
 
 def register(registry):
     registry.register(IW_DEV_METADATA, IwDevAdapter)
+    registry.register(IW_SCAN_METADATA, IwScanAdapter)
     registry.register(IW_LIST_METADATA, IwListAdapter)

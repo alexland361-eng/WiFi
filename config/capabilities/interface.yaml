@@ -1,4 +1,13 @@
 # Interface capabilities
+- name: iw_scan
+  tool_binary: iw
+  category: wireless_interface
+  description: "Passive BSS and WPA3/RSN posture discovery via iw dev scan"
+  requirements:
+    os: [linux]
+    interface_required: true
+    privileges: []
+
 - name: iw_dev
   tool_binary: iw
   category: wireless_interface
