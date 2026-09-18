@@ -119,6 +119,10 @@ def parse_wpa_config(
         elif issues is not None:
             issues.append("invalid anti_clogging_threshold value")
 
+    eap_pwd_configured: Optional[bool] = None
+    if settings.get("eap", "").upper() == "PWD" or "eap_pwd_groups" in settings:
+        eap_pwd_configured = True
+
     return Wpa3Posture(
         bssid=bssid,
         akm_suites=akm,
@@ -130,6 +134,7 @@ def parse_wpa_config(
         transition_disable_configured=(settings.get("transition_disable") == "1")
         if "transition_disable" in settings
         else None,
+        eap_pwd_configured=eap_pwd_configured,
         version=version,
         source=source,
     )

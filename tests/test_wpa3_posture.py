@@ -492,3 +492,10 @@ def test_sae_capture_parser_uses_canonical_mac_identity() -> None:
     }}}]
     result = parse_sae_tshark_json(json.dumps(packets))
     assert result[0]["bssid"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_wpa_config_recognizes_explicit_eap_pwd_only() -> None:
+    explicit = parse_wpa_config("wpa_key_mgmt=WPA-EAP\neap=PWD\neap_pwd_groups=19\n")
+    assert explicit.eap_pwd_configured is True
+    external = parse_wpa_config("wpa_key_mgmt=WPA-EAP\neap_user_file=/etc/hostapd/hostapd.eap_users\n")
+    assert external.eap_pwd_configured is None
