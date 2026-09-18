@@ -1380,6 +1380,6 @@ Six commits, every fix mutation-checked.
 - Added assessment-engine projection of Dragonblood exposure into ordinary findings. These findings carry `wpa3`/`dragonblood` tags, preserve evidence IDs, and never become verified from a passive observation.
 - Added tests proving RSN posture survives world-model update, transition-mode findings reach the assessment finding store, and control-client evidence cannot retain passphrases.
 - Added real `hostap_cli`/`wpa_cli` configuration/status adapters. The secret sanitizer runs before `Evidence.raw_output`, because parsing a secret away after storing raw output would still leak it.
-- Added an explicit-field-only SAE capture parser and offline tshark adapter. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution.
+- Added an explicit-field-only SAE capture parser and offline tshark adapter. JSON and TSV output now preserve the same decoded BSSID provenance. It enriches observed groups for a known BSSID without transmitting frames or inferring groups from raw bytes. Missing capture paths are rejected before execution.
 - Found and fixed a stale-finding path: an unresolved beacon finding now gets refined by later authorized capture/configuration evidence; verified findings are never downgraded.
 - Verification after this continuation: 877 tests passed, coverage 70.39%, Ruff clean, mypy 30 at baseline, and the registry contains 62 capabilities.

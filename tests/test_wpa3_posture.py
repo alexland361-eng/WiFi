@@ -379,11 +379,12 @@ def test_sae_capture_parser_uses_explicit_tshark_group_fields_only() -> None:
     assert result[0]["sae_commit_count"] == 1
     assert result[0]["sae_confirm_count"] == 1
 
-    fields = "3\t1\t28\n3\t2\t28\n"
+    fields = "3\t1\t28\t00:11:22:33:44:55\n3\t2\t28\t00:11:22:33:44:55\n"
     result = parse_sae_tshark_fields(
-        fields, ["wlan.fixed.auth_alg", "wlan.fixed.auth_seq", "wlan.sae.group"]
+        fields, ["wlan.fixed.auth_alg", "wlan.fixed.auth_seq", "wlan.sae.group", "wlan.bssid"]
     )
     assert result[0]["sae_groups"] == [28]
+    assert result[0]["bssid"] == "00:11:22:33:44:55"
 
 
 def test_sae_capture_parser_does_not_infer_groups_from_unlabeled_bytes() -> None:

@@ -155,6 +155,9 @@ def parse_sae_tshark_fields(
         if group is not None:
             item["sae_group"] = group
             groups.add(group)
+        for key in ("wlan.bssid", "wlan.sa", "wlan.da"):
+            if key in row and row[key].strip():
+                item[key.rsplit(".", 1)[1]] = row[key].strip()
         observations.append(item)
     if not observations and issues is not None:
         issues.append("field output contained no explicit SAE observations")
@@ -162,6 +165,7 @@ def parse_sae_tshark_fields(
         return []
     return [{
         "sae": True,
+        **({"bssid": observations[0]["bssid"]} if "bssid" in observations[0] else {}),
         "sae_groups": sorted(groups),
         "sae_observation_count": len(observations),
         "sae_commit_count": sum(item.get("authentication_sequence") == 1 for item in observations),
