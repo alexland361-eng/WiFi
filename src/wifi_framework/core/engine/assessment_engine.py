@@ -944,8 +944,55 @@ class AssessmentEngine:
             self.state.add_finding(finding)
             self.audit_logger.log_finding(finding)
 
+    def _update_wpa3_auth_findings(self) -> None:
+        """Project interface-scoped control-client WPA3 audits into findings."""
+        allowed = {
+            "akm_suites", "mfpc", "mfpr", "h2e_advertised", "sae_pk_advertised",
+            "sae_groups", "sae_pwe", "anti_clogging_threshold",
+            "transition_disable_configured", "implementation", "version",
+            "source", "eap_pwd_configured",
+        }
+        for record in self.state.world_model.authentication_observations:
+            posture = Wpa3Posture(
+                bssid="",
+                **{key: record[key] for key in allowed if key in record},
+            )
+            asset = f"interface:{record.get('interface') or 'local'}"
+            evidence_id = record.get("evidence_id")
+            for exposure in assess_dragonblood_exposure(posture):
+                tag = f"wpa3-config:{exposure.attack}"
+                existing = next((
+                    finding for finding in self.state.findings
+                    if tag in finding.tags and asset in finding.affected_assets
+                ), None)
+                status = FindingStatus(exposure.status.value)
+                if existing is not None:
+                    if existing.status not in (FindingStatus.VERIFIED, FindingStatus.CONFIRMED):
+                        existing.description = exposure.detail
+                        existing.details = exposure.to_dict()
+                        existing.status = status
+                        existing.severity = FindingSeverity(exposure.severity.value)
+                        if evidence_id:
+                            existing.add_evidence(evidence_id)
+                    continue
+                finding = Finding(
+                    title=f"WPA3 configuration: {exposure.attack}",
+                    description=exposure.detail,
+                    category=FindingCategory(exposure.category.value),
+                    severity=FindingSeverity(exposure.severity.value),
+                    status=status,
+                    confidence=0.8 if status is FindingStatus.SUPPORTED else 0.4,
+                    affected_assets=[asset],
+                    details=exposure.to_dict(),
+                    evidence_ids=[evidence_id] if evidence_id else [],
+                    tags=[tag, "dragonblood", "wpa3", "configuration"],
+                )
+                self.state.add_finding(finding)
+                self.audit_logger.log_finding(finding)
+
     def update_findings_from_world_model(self):
         """Generate findings from world model."""
+        self._update_wpa3_auth_findings()
         # AP findings
         for bssid, ap in self.state.world_model.access_points.items():
             self._update_wpa3_findings(bssid, ap)

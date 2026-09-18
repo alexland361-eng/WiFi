@@ -531,3 +531,38 @@ def test_control_client_audit_can_explicitly_inspect_eap_user_file(tmp_path) -> 
     assert evidence.parsed_data["eap_pwd_configured"] is True
     assert "do-not-store" not in repr(evidence.parsed_data)
     assert adapter.custom_parameter_validation({"eap_user_file": str(user_file)}) == (True, [])
+
+
+def test_control_client_eap_pwd_posture_reaches_configuration_findings(tmp_path) -> None:
+    from wifi_framework.core.audit.logger import AuditLogger
+    from wifi_framework.core.engine.assessment_engine import AssessmentEngine
+    from wifi_framework.core.models.scope import AssessmentScope
+    from wifi_framework.tools.adapters.audit.wpa3 import (
+        HOSTAPD_WPA3_AUDIT_METADATA,
+        HostapdWpa3AuditAdapter,
+    )
+
+    user_file = tmp_path / "eap_users"
+    user_file.write_text('"alice" PWD "secret"\n', encoding="utf-8")
+    adapter = HostapdWpa3AuditAdapter(HOSTAPD_WPA3_AUDIT_METADATA)
+    evidence = adapter.parse_output(
+        "wpa_key_mgmt=WPA-EAP\n", "", 0,
+        {"eap_user_file": str(user_file)}, "wlan0",
+    )[0]
+    from wifi_framework.core.models.evidence import EvidenceType
+    assert evidence.evidence_type is EvidenceType.AUTHENTICATION
+
+    engine = AssessmentEngine(
+        AssessmentScope(),
+        audit_logger=AuditLogger(log_dir=str(tmp_path / "audit")),
+        artifact_dir=str(tmp_path / "artifacts"),
+    )
+    engine.state.add_evidence(evidence)
+    engine.update_findings_from_world_model()
+    findings = [
+        f for f in engine.state.findings
+        if any(tag.startswith("wpa3-config:") for tag in f.tags)
+    ]
+    assert findings
+    assert any("EAP-pwd" in f.title for f in findings)
+    assert all("secret" not in repr(f.to_dict()) for f in findings)

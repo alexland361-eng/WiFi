@@ -232,6 +232,9 @@ class WorldModel:
     network_hosts: Dict[str, NetworkHost] = field(default_factory=dict)  # ip -> host
     channels_observed: Set[int] = field(default_factory=set)
     ssids_observed: Set[str] = field(default_factory=set)
+    #: Interface-scoped configuration/status observations without a BSSID, such as
+    #: hostapd_cli or wpa_cli WPA3 audits.
+    authentication_observations: List[Dict[str, Any]] = field(default_factory=list)
     evidence_count: int = 0
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -285,6 +288,12 @@ class WorldModel:
                 self.access_points[bssid].last_seen = evidence.timestamp
                 if evidence.id not in self.access_points[bssid].evidence_ids:
                     self.access_points[bssid].evidence_ids.append(evidence.id)
+
+        elif etype == EvidenceType.AUTHENTICATION:
+            record = dict(data)
+            record["evidence_id"] = evidence.id
+            record["interface"] = evidence.interface
+            self.authentication_observations.append(record)
 
         elif etype == EvidenceType.CLIENT:
             mac = data.get("client_mac") or data.get("mac") or data.get("client")
@@ -380,6 +389,7 @@ class WorldModel:
             "network_hosts_count": len(self.network_hosts),
             "channels_observed": sorted(list(self.channels_observed)),
             "ssids_observed": sorted(list(self.ssids_observed)),
+            "authentication_observations": list(self.authentication_observations),
             "evidence_count": self.evidence_count,
             "last_updated": self.last_updated.isoformat(),
         }
@@ -391,6 +401,7 @@ class WorldModel:
             "network_hosts": {ip: host.to_dict() for ip, host in self.network_hosts.items()},
             "channels_observed": sorted(list(self.channels_observed)),
             "ssids_observed": sorted(list(self.ssids_observed)),
+            "authentication_observations": list(self.authentication_observations),
             "evidence_count": self.evidence_count,
             "last_updated": self.last_updated.isoformat(),
         }
